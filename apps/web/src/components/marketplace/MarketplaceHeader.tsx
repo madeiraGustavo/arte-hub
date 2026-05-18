@@ -59,6 +59,7 @@ export function MarketplaceHeader() {
     try {
       await fetch('/api/auth/logout', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'X-Site-Id': 'marketplace' },
       })
     } catch {

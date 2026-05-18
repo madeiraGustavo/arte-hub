@@ -25,6 +25,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         'Authorization': authHeader,
         'Cookie': cookieHeader,
       },
+      body: '{}',
     })
   } catch {
     return NextResponse.json({ error: 'Serviço indisponível' }, { status: 503 })
