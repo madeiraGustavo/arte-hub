@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { SITES } from '@/lib/sites'
-import { apiGet } from '@/lib/api/client'
+import { getAccessToken } from '@/lib/api/client'
 
 const site = SITES.tattoo!
 
@@ -18,8 +18,12 @@ export default function TattooMinhaContaPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiGet<Session>('/auth/session')
-      .then(data => setSession(data))
+    const token = getAccessToken()
+    fetch('/api/auth/session', {
+      headers: token ? { 'Authorization': `Bearer ${token}`, 'X-Site-Id': site.id } : { 'X-Site-Id': site.id },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setSession(data as Session | null))
       .catch(() => setSession(null))
       .finally(() => setLoading(false))
   }, [])

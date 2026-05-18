@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { SiteConfig } from '@/lib/sites'
+import { setAccessToken } from '@/lib/api/client'
 
 interface RegisterFormProps {
   site: SiteConfig
@@ -31,6 +32,10 @@ export function RegisterForm({ site }: RegisterFormProps) {
     })
 
     if (res.status === 201) {
+      const data = await res.json() as { accessToken?: string }
+      if (data.accessToken) {
+        setAccessToken(data.accessToken)
+      }
       // Todos os tenants vão para área do cliente
       const redirectTo = `/${site.slug}/minha-conta`
       router.push(redirectTo)
