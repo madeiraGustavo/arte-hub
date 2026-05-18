@@ -31,8 +31,8 @@ export function RegisterForm({ site }: RegisterFormProps) {
     })
 
     if (res.status === 201) {
-      // Platform vai para dashboard, outros sites para dashboard do tenant
-      const redirectTo = site.id === 'platform' ? '/dashboard' : `/${site.slug}/dashboard`
+      // Platform vai para dashboard, outros sites para home do tenant
+      const redirectTo = site.id === 'platform' ? '/dashboard' : `/${site.slug}`
       router.push(redirectTo)
       router.refresh()
     } else if (res.status === 409) {
