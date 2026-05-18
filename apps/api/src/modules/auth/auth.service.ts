@@ -41,6 +41,7 @@ export interface SessionData {
   artist: {
     id:   string
     slug: string
+    name: string
   } | null
 }
 

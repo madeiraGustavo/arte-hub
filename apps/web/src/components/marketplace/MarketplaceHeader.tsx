@@ -1,32 +1,92 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { getAccessToken } from '@/lib/api/client'
+import { getAccessToken, setAccessToken } from '@/lib/api/client'
 import { useCartStore } from '@/stores/cartStore'
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type AuthState = 'loading' | 'authenticated' | 'unauthenticated'
+
+interface SessionData {
+  user: { id: string; email: string; role: string; siteId: string }
+  artist: { id: string; slug: string; name: string } | null
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function truncateDisplayName(value: string, maxLen = 20): string {
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value
+}
+
+function resolveDisplayName(session: SessionData): string {
+  // Priority: artist.name → user.email → "Minha Conta"
+  if (session.artist?.name) return truncateDisplayName(session.artist.name)
+  if (session.user.email) return truncateDisplayName(session.user.email)
+  return 'Minha Conta'
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function MarketplaceHeader() {
-  const [isArtist, setIsArtist] = useState(false)
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [authState, setAuthState] = useState<AuthState>('loading')
+  const [session, setSession] = useState<SessionData | null>(null)
   const [isScrolled, setIsScrolled] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   const items = useCartStore((state) => state.items)
   const cartItemCount = items.reduce((sum, item) => sum + item.quantity, 0)
 
+  // Derived state
+  const isLoggedIn = authState === 'authenticated'
+  const isArtist = session?.user.role === 'artist' || session?.user.role === 'admin' || session?.user.role === 'editor'
+  const displayName = session ? resolveDisplayName(session) : ''
+
+  // ── Session check on mount ──────────────────────────────────────────────
   useEffect(() => {
     const token = getAccessToken()
-    if (token) {
-      setIsLoggedIn(true)
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1] ?? ''))
-        if (payload.role === 'artist' || payload.role === 'admin') {
-          setIsArtist(true)
-        }
-      } catch {
-        // Invalid token payload — ignore
-      }
+    if (!token) {
+      setAuthState('unauthenticated')
+      return
     }
+
+    fetch('/api/auth/session', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-Site-Id': 'marketplace',
+      },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { authenticated?: boolean; user?: SessionData['user']; artist?: SessionData['artist'] } | null) => {
+        if (data?.authenticated && data.user) {
+          setSession({ user: data.user, artist: data.artist ?? null })
+          setAuthState('authenticated')
+        } else {
+          setAuthState('unauthenticated')
+        }
+      })
+      .catch(() => setAuthState('unauthenticated'))
   }, [])
+
+  // ── Logout handler ──────────────────────────────────────────────────────
+  async function handleLogout() {
+    setIsLoggingOut(true)
+    closeMobileMenu()
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'X-Site-Id': 'marketplace' },
+      })
+    } catch {
+      // Best-effort — clear local state regardless
+    }
+    setAccessToken(null)
+    setSession(null)
+    setAuthState('unauthenticated')
+    setIsLoggingOut(false)
+    window.location.href = '/marketplace/login'
+  }
 
   useEffect(() => {
     function handleScroll() {
@@ -146,8 +206,10 @@ export function MarketplaceHeader() {
             )}
           </a>
 
-          {/* Login / Account Button */}
-          {!isLoggedIn ? (
+          {/* Login / Account / Logout */}
+          {authState === 'loading' ? (
+            <div className="w-24 h-10" /> /* placeholder while loading */
+          ) : !isLoggedIn ? (
             <a
               href="/marketplace/login"
               className="mp-btn-primary text-sm px-5 py-2"
@@ -156,13 +218,24 @@ export function MarketplaceHeader() {
               Entrar
             </a>
           ) : (
-            <a
-              href="/marketplace/minha-conta"
-              className="mp-btn-secondary text-sm px-5 py-2"
-              style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center' }}
-            >
-              Minha Conta
-            </a>
+            <div className="flex items-center gap-3">
+              <a
+                href="/marketplace/minha-conta"
+                className="text-sm font-medium transition-colors duration-200 hover:opacity-80"
+                style={{ color: 'var(--mp-text-default)' }}
+              >
+                Olá, {displayName}
+              </a>
+              <button
+                type="button"
+                disabled={isLoggingOut}
+                onClick={handleLogout}
+                className="text-sm font-medium transition-colors duration-200 hover:opacity-80 disabled:opacity-50"
+                style={{ color: 'var(--mp-text-secondary)' }}
+              >
+                Sair
+              </button>
+            </div>
           )}
         </div>
 
@@ -326,9 +399,11 @@ export function MarketplaceHeader() {
           )}
         </nav>
 
-        {/* Panel Footer — Login/Account */}
+        {/* Panel Footer — Login/Account/Logout */}
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t" style={{ borderColor: 'var(--mp-border-default)' }}>
-          {!isLoggedIn ? (
+          {authState === 'loading' ? (
+            <div className="h-11" />
+          ) : !isLoggedIn ? (
             <a
               href="/marketplace/login"
               className="mp-btn-primary w-full text-sm text-center"
@@ -337,13 +412,24 @@ export function MarketplaceHeader() {
               Entrar
             </a>
           ) : (
-            <a
-              href="/marketplace/minha-conta"
-              className="mp-btn-secondary w-full text-sm text-center"
-              onClick={closeMobileMenu}
-            >
-              Minha Conta
-            </a>
+            <div className="flex flex-col gap-2">
+              <a
+                href="/marketplace/minha-conta"
+                className="mp-btn-secondary w-full text-sm text-center"
+                onClick={closeMobileMenu}
+              >
+                Olá, {displayName}
+              </a>
+              <button
+                type="button"
+                disabled={isLoggingOut}
+                onClick={handleLogout}
+                className="w-full h-11 text-sm font-medium rounded-lg border transition-colors duration-200 hover:bg-red-50 disabled:opacity-50"
+                style={{ borderColor: 'var(--mp-border-default)', color: '#dc2626' }}
+              >
+                Sair
+              </button>
+            </div>
           )}
         </div>
       </div>

@@ -2,7 +2,8 @@
  * POST /api/auth/logout
  * Proxy para POST ${API_URL}/auth/logout na API Fastify
  *
- * Multi-tenant: repassa X-Site-Id para que o backend limpe o cookie correto.
+ * Multi-tenant: repassa header X-Site-Id e cookies para que o backend
+ * revogue os refresh tokens do tenant correto.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -10,49 +11,38 @@ import { NextRequest, NextResponse } from 'next/server'
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const headers: Record<string, string> = {}
-
-  // Repassa cookies para que a API leia o refreshToken
-  const cookie = req.headers.get('cookie')
-  if (cookie) {
-    headers['cookie'] = cookie
-  }
-
-  // Repassa Authorization se disponível
-  const authorization = req.headers.get('authorization')
-  if (authorization) {
-    headers['authorization'] = authorization
-  }
-
-  // Repassa X-Site-Id para resolução de tenant
   const siteId = req.headers.get('x-site-id') ?? 'platform'
-  headers['x-site-id'] = siteId
+  const authHeader = req.headers.get('authorization') ?? ''
+  const cookieHeader = req.headers.get('cookie') ?? ''
 
   let apiRes: Response
   try {
     apiRes = await fetch(`${API_URL}/auth/logout`, {
-      method:  'POST',
-      headers,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Site-Id': siteId,
+        'Authorization': authHeader,
+        'Cookie': cookieHeader,
+      },
     })
   } catch {
     return NextResponse.json({ error: 'Serviço indisponível' }, { status: 503 })
   }
 
-  let data: Record<string, unknown> = {}
-  if (apiRes.status !== 204) {
-    try {
-      data = await apiRes.json() as Record<string, unknown>
-    } catch {
-      // corpo vazio ou não-JSON
+  const res = new NextResponse(null, { status: apiRes.status })
+
+  // Forward Set-Cookie headers (cookie clearance from API)
+  const cookies = apiRes.headers.getSetCookie?.() ?? []
+  if (cookies.length > 0) {
+    for (const cookie of cookies) {
+      res.headers.append('set-cookie', cookie)
     }
-  }
-
-  const res = NextResponse.json(data, { status: apiRes.status })
-
-  // Repassa cookies Set-Cookie da API (limpeza do refreshToken) para o browser
-  const setCookie = apiRes.headers.get('set-cookie')
-  if (setCookie) {
-    res.headers.set('set-cookie', setCookie)
+  } else {
+    const setCookie = apiRes.headers.get('set-cookie')
+    if (setCookie) {
+      res.headers.set('set-cookie', setCookie)
+    }
   }
 
   return res

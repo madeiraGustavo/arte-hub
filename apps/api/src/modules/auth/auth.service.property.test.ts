@@ -284,6 +284,7 @@ describe('Property 3: Estrutura completa da resposta de sessão', () => {
               const mockArtist = {
                 id:   artistId,
                 slug: `artist-${artistId.slice(0, 8)}`,
+                name: `Artist ${artistId.slice(0, 8)}`,
               }
               vi.mocked(findArtistById).mockResolvedValue(mockArtist)
             } else {
