@@ -23,6 +23,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         'X-Site-Id': siteId,
         'Cookie': cookieHeader,
       },
+      body: '{}',
     })
   } catch {
     return NextResponse.json({ error: 'Serviço indisponível' }, { status: 503 })
