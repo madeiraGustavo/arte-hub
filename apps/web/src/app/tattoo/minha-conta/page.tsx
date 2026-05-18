@@ -3,34 +3,38 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { SITES } from '@/lib/sites'
-import { getAccessToken } from '@/lib/api/client'
+import { setAccessToken } from '@/lib/api/client'
+import { bootstrapSession, type SessionData } from '@/lib/auth/session'
 
 const site = SITES.tattoo!
 
-interface Session {
-  authenticated: boolean
-  user: { id: string; email: string; role: string }
-}
-
 export default function TattooMinhaContaPage() {
   const router = useRouter()
-  const [session, setSession] = useState<Session | null>(null)
+  const [session, setSession] = useState<SessionData | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = getAccessToken()
-    fetch('/api/auth/session', {
-      headers: token ? { 'Authorization': `Bearer ${token}`, 'X-Site-Id': site.id } : { 'X-Site-Id': site.id },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => setSession(data as Session | null))
+    bootstrapSession(site.id)
+      .then(result => {
+        if (result.status === 'authenticated') {
+          setSession(result.data)
+        } else {
+          setSession(null)
+        }
+      })
       .catch(() => setSession(null))
       .finally(() => setLoading(false))
   }, [])
 
   function handleLogout() {
-    fetch('/api/auth/logout', { method: 'POST', headers: { 'X-Site-Id': site.id } })
-      .then(() => router.push(`/${site.slug}/login`))
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-Site-Id': site.id },
+    }).then(() => {
+      setAccessToken(null)
+      router.push(`/${site.slug}/login`)
+    })
   }
 
   if (loading) {
@@ -49,7 +53,7 @@ export default function TattooMinhaContaPage() {
         </h1>
         <h2 className="text-xl text-white mb-6">Minha Conta</h2>
 
-        {session?.authenticated ? (
+        {session ? (
           <div className="space-y-4">
             <div className="bg-white/5 border border-white/10 rounded-lg p-4">
               <p className="text-white/60 text-sm mb-1">Logado como</p>
@@ -74,7 +78,12 @@ export default function TattooMinhaContaPage() {
             </button>
           </div>
         ) : (
-          <p className="text-white/60">Sessão expirada. Faça login novamente.</p>
+          <div className="text-center">
+            <p className="text-white/60 mb-4">Sessão expirada. Faça login novamente.</p>
+            <a href={`/${site.slug}/login`} className="text-sm underline" style={{ color: site.theme.secondaryColor }}>
+              Ir para login
+            </a>
+          </div>
         )}
       </div>
     </div>

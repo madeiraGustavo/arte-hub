@@ -1,17 +1,13 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { getAccessToken, setAccessToken } from '@/lib/api/client'
+import { setAccessToken } from '@/lib/api/client'
 import { useCartStore } from '@/stores/cartStore'
+import { bootstrapSession, type SessionData } from '@/lib/auth/session'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type AuthState = 'loading' | 'authenticated' | 'unauthenticated'
-
-interface SessionData {
-  user: { id: string; email: string; role: string; siteId: string }
-  artist: { id: string; slug: string; name: string } | null
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -20,7 +16,6 @@ function truncateDisplayName(value: string, maxLen = 20): string {
 }
 
 function resolveDisplayName(session: SessionData): string {
-  // Priority: artist.name → user.email → "Minha Conta"
   if (session.artist?.name) return truncateDisplayName(session.artist.name)
   if (session.user.email) return truncateDisplayName(session.user.email)
   return 'Minha Conta'
@@ -43,24 +38,12 @@ export function MarketplaceHeader() {
   const isArtist = session?.user.role === 'artist' || session?.user.role === 'admin' || session?.user.role === 'editor'
   const displayName = session ? resolveDisplayName(session) : ''
 
-  // ── Session check on mount ──────────────────────────────────────────────
+  // ── Session bootstrap on mount ──────────────────────────────────────────
   useEffect(() => {
-    const token = getAccessToken()
-    if (!token) {
-      setAuthState('unauthenticated')
-      return
-    }
-
-    fetch('/api/auth/session', {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-Site-Id': 'marketplace',
-      },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then((data: { authenticated?: boolean; user?: SessionData['user']; artist?: SessionData['artist'] } | null) => {
-        if (data?.authenticated && data.user) {
-          setSession({ user: data.user, artist: data.artist ?? null })
+    bootstrapSession('marketplace')
+      .then(result => {
+        if (result.status === 'authenticated') {
+          setSession(result.data)
           setAuthState('authenticated')
         } else {
           setAuthState('unauthenticated')
