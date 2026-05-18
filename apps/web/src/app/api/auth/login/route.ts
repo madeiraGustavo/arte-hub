@@ -38,10 +38,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const data = await apiRes.json() as Record<string, unknown>
   const res  = NextResponse.json(data, { status: apiRes.status })
 
-  // Repassa cookies Set-Cookie da API (refreshToken HttpOnly) para o browser
-  const setCookie = apiRes.headers.get('set-cookie')
-  if (setCookie) {
-    res.headers.set('set-cookie', setCookie)
+  // Repassa todos os cookies Set-Cookie da API para o browser
+  // getSetCookie() retorna array com cada cookie individual
+  const cookies = apiRes.headers.getSetCookie?.() ?? []
+  if (cookies.length > 0) {
+    for (const cookie of cookies) {
+      res.headers.append('set-cookie', cookie)
+    }
+  } else {
+    // Fallback: get() retorna cookies concatenados com ", "
+    const setCookie = apiRes.headers.get('set-cookie')
+    if (setCookie) {
+      res.headers.set('set-cookie', setCookie)
+    }
   }
 
   return res
