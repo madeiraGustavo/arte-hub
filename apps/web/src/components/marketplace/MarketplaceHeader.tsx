@@ -149,7 +149,7 @@ export function MarketplaceHeader() {
           {/* Login / Account Button */}
           {!isLoggedIn ? (
             <a
-              href="/login"
+              href="/marketplace/login"
               className="mp-btn-primary text-sm px-5 py-2"
               style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center' }}
             >
@@ -157,7 +157,7 @@ export function MarketplaceHeader() {
             </a>
           ) : (
             <a
-              href="/dashboard/marketplace"
+              href="/marketplace/minha-conta"
               className="mp-btn-secondary text-sm px-5 py-2"
               style={{ minHeight: '44px', display: 'inline-flex', alignItems: 'center' }}
             >
@@ -330,7 +330,7 @@ export function MarketplaceHeader() {
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t" style={{ borderColor: 'var(--mp-border-default)' }}>
           {!isLoggedIn ? (
             <a
-              href="/login"
+              href="/marketplace/login"
               className="mp-btn-primary w-full text-sm text-center"
               onClick={closeMobileMenu}
             >
@@ -338,7 +338,7 @@ export function MarketplaceHeader() {
             </a>
           ) : (
             <a
-              href="/dashboard/marketplace"
+              href="/marketplace/minha-conta"
               className="mp-btn-secondary w-full text-sm text-center"
               onClick={closeMobileMenu}
             >
