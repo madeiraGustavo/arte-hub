@@ -1,0 +1,48 @@
+/**
+ * POST /api/auth/register
+ * Proxy para POST ${API_URL}/auth/register na API Fastify
+ *
+ * Multi-tenant: repassa header X-Site-Id para que o backend resolva o tenant.
+ * O header vem do frontend (RegisterForm) — o backend valida contra config estática.
+ */
+
+import { NextRequest, NextResponse } from 'next/server'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Corpo da requisição inválido' }, { status: 400 })
+  }
+
+  // Repassa X-Site-Id do frontend para o backend
+  const siteId = req.headers.get('x-site-id') ?? 'platform'
+
+  let apiRes: Response
+  try {
+    apiRes = await fetch(`${API_URL}/auth/register`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Site-Id':    siteId,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    return NextResponse.json({ error: 'Serviço indisponível' }, { status: 503 })
+  }
+
+  const data = await apiRes.json() as Record<string, unknown>
+  const res  = NextResponse.json(data, { status: apiRes.status })
+
+  // Repassa cookies Set-Cookie da API (refreshToken HttpOnly) para o browser
+  const setCookie = apiRes.headers.get('set-cookie')
+  if (setCookie) {
+    res.headers.set('set-cookie', setCookie)
+  }
+
+  return res
+}

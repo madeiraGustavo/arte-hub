@@ -46,3 +46,71 @@ As migrations SQL estão em `apps/api/migrations/` e são aplicadas via Prisma:
 ```bash
 pnpm prisma:migrate
 ```
+
+## Autenticação Multi-Tenant
+
+### Estratégia
+
+A identidade do usuário é definida pela chave composta `(siteId, email)` — o mesmo email pode existir em tenants diferentes sem conflito. O tenant é resolvido a partir do header `X-Site-Id` (definido pelo proxy server-side do Next.js, nunca pelo browser diretamente).
+
+### Tenants configurados
+
+| Site ID | Cookie Name | Display Name |
+|---------|-------------|--------------|
+| `platform` | `ah_platform_refresh` | Arte Hub |
+| `marketplace` | `ah_marketplace_refresh` | Toldos Colibri |
+| `tattoo` | `ah_tattoo_refresh` | Studio Tattoo |
+| `music` | `ah_music_refresh` | Arte Hub Music |
+
+### Cookies
+
+Cada tenant possui um cookie de refresh isolado. Atributos:
+- `HttpOnly` — inacessível via JavaScript
+- `Secure` — apenas HTTPS em produção
+- `SameSite=Strict` — proteção contra CSRF
+- `Path=/`
+- `Max-Age=604800` (7 dias)
+
+O cookie legado `refreshToken` é mantido para backward compatibility.
+
+### POST `/auth/register` — Cadastro público
+
+Endpoint público para criação de conta. Não requer autenticação.
+
+**Validação (Zod):**
+- `email` — formato de email válido (obrigatório)
+- `password` — mínimo 6 caracteres (obrigatório)
+- `name` — 1 a 100 caracteres (opcional)
+
+**Comportamento:**
+1. Valida body com Zod (422 se inválido)
+2. Resolve tenant via header `X-Site-Id` (fallback: `platform`)
+3. Normaliza email (lowercase + trim)
+4. Verifica duplicidade no tenant (409 se email já existe no mesmo site)
+5. Hash da senha com bcrypt (12 salt rounds)
+6. Cria usuário com role `client` (hardcoded — não aceita role do body)
+7. Gera par de tokens (access 15min + refresh 7d)
+8. Define cookies tenant-specific + legado
+9. Retorna `201 { accessToken, siteId }`
+
+**Respostas:**
+- `201` — Conta criada com sucesso + auto-login
+- `409` — Email já cadastrado neste site
+- `422` — Dados inválidos (detalhes do Zod)
+- `500` — Erro interno
+
+### Proxy Pattern (Next.js → Fastify)
+
+O frontend Next.js não acessa a API diretamente do browser. Rotas de autenticação passam por um proxy server-side:
+
+```
+Browser → POST /api/auth/register (Next.js route handler)
+       → POST ${API_URL}/auth/register (Fastify)
+       ← Set-Cookie headers repassados ao browser
+```
+
+O proxy:
+- Repassa body e header `X-Site-Id`
+- Repassa `Set-Cookie` da resposta da API
+- Retorna status code e body da API
+- Retorna 400 para JSON inválido, 503 se API indisponível

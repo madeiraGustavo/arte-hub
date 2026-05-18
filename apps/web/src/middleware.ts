@@ -69,6 +69,11 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL('/platform/login', req.url))
   }
 
+  // ── Redirect /register → /platform/register (backward compat) ──────────
+  if (pathname === '/register') {
+    return NextResponse.redirect(new URL('/platform/register', req.url))
+  }
+
   // ── Resolve tenant ─────────────────────────────────────────────────────
   const siteId = resolveSiteIdFromPath(pathname)
 
