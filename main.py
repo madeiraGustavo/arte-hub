@@ -3,6 +3,7 @@
 Gmail Campaign Automation — CLI entry point.
 
 Usage:
+  python main.py wizard                   # Interactive setup (proxy, Telegram, templates)
   python main.py setup                    # Initialize DB and dirs
   python main.py import-accounts          # Import accounts from data/accounts/*.txt
   python main.py import-recipients FILE   # Import recipients from Excel
@@ -135,7 +136,10 @@ def main() -> None:
 
     cmd = args[0].lower()
 
-    if cmd == "setup":
+    if cmd == "wizard":
+        from src.wizard import run_wizard
+        run_wizard()
+    elif cmd == "setup":
         cmd_setup(config)
     elif cmd == "import-accounts":
         cmd_import_accounts(config)

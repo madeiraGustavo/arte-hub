@@ -147,6 +147,58 @@ async def api_running():
     return _running_task
 
 
+# ── Config read/write ─────────────────────────────────────────────────────────
+
+@app.get("/api/config")
+async def api_config_get():
+    path = Path("config.json")
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+@app.post("/api/config")
+async def api_config_save(request: Request):
+    body = await request.json()
+    # Never allow writing arbitrary fields — only known top-level keys
+    allowed = {"proxy", "telegram", "campaign", "paths", "headless", "missing_2fa_strategy"}
+    filtered = {k: v for k, v in body.items() if k in allowed}
+    with open("config.json", "w", encoding="utf-8") as fh:
+        json.dump(filtered, fh, indent=2, ensure_ascii=False)
+    # Reload config
+    global _config
+    _config = None
+    _get_config()
+    return {"status": "saved"}
+
+
+# ── Templates read/write ──────────────────────────────────────────────────────
+
+@app.get("/api/templates")
+async def api_templates_get():
+    result = {}
+    for lang in ("en", "nl", "fr", "de"):
+        for stage in ("first", "second"):
+            key = f"{lang}_{stage}"
+            path = Path("templates") / f"{key}.txt"
+            result[key] = path.read_text(encoding="utf-8") if path.exists() else ""
+    return result
+
+
+@app.post("/api/templates/{key}")
+async def api_template_save(key: str, request: Request):
+    allowed = {f"{l}_{s}" for l in ("en","nl","fr","de") for s in ("first","second")}
+    if key not in allowed:
+        return JSONResponse({"error": "invalid key"}, status_code=400)
+    body = await request.json()
+    text = body.get("text", "")
+    path = Path("templates") / f"{key}.txt"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return {"status": "saved"}
+
+
 # ── SSE log stream (real-time last log line) ─────────────────────────────────
 
 @app.get("/api/logs/stream")
@@ -186,7 +238,7 @@ async def dashboard():
 
 # ─────────────────────────── HTML template ───────────────────────────────────
 
-DASHBOARD_HTML = """<!DOCTYPE html>
+DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -290,6 +342,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   /* ── Live log ────────────────────────────────── */
   #live-logs { max-height: 260px; overflow-y: auto; }
+
+  /* ── Tabs ────────────────────────────────────── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .tab-btn { padding: 9px 20px; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .15s; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── Settings form ───────────────────────────── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
+  .form-group input, .form-group select {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none;
+  }
+  .form-group input:focus { border-color: var(--accent); }
+  .form-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .form-section h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; margin-bottom: 14px; }
+  .btn-save { background: var(--accent); color: #fff; padding: 9px 24px; border: none; border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 6px; }
+  .btn-save:hover { opacity: .9; }
+
+  /* ── Templates editor ────────────────────────── */
+  .tmpl-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+  .tmpl-tab { padding: 6px 16px; border-radius: 20px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; font-size: 12px; }
+  .tmpl-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tmpl-stage-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tmpl-stage { padding: 5px 14px; border-radius: 5px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; font-size: 12px; }
+  .tmpl-stage.active { background: var(--surface2); color: var(--text); }
+  textarea.tmpl-editor {
+    width: 100%; min-height: 280px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 14px; border-radius: 8px; font-family: 'Consolas', monospace;
+    font-size: 13px; resize: vertical; outline: none; line-height: 1.6;
+  }
+  textarea.tmpl-editor:focus { border-color: var(--accent); }
+  .tmpl-hint { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+  .tmpl-hint code { background: var(--surface2); padding: 1px 6px; border-radius: 4px; color: var(--accent); }
 </style>
 </head>
 <body>
@@ -304,6 +394,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </header>
 
 <main>
+
+  <!-- Tab navigation -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('overview',this)">📊 Overview</button>
+    <button class="tab-btn" onclick="switchTab('templates',this)">✉️ Templates</button>
+    <button class="tab-btn" onclick="switchTab('settings',this)">⚙️ Settings</button>
+  </div>
+
+  <!-- ══════════════ TAB: OVERVIEW ══════════════ -->
+  <div class="tab-pane active" id="tab-overview">
 
   <!-- Stats cards -->
   <div class="cards" id="cards-area">
@@ -400,6 +500,139 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </table>
     </div>
   </div>
+
+  </div><!-- end tab-overview -->
+
+  <!-- ══════════════ TAB: TEMPLATES ══════════════ -->
+  <div class="tab-pane" id="tab-templates">
+    <div class="form-section">
+      <h3>Email Templates</h3>
+      <p class="tmpl-hint" style="margin-bottom:16px;">
+        Available placeholders:
+        <code>{{recipient_email}}</code>
+        <code>{{subject}}</code>
+        <code>{{unique_link}}</code> (second email only)<br>
+        Start your text with <code>SUBJECT: your subject here</code> on the first line.
+      </p>
+
+      <!-- Language tabs -->
+      <div class="tmpl-tabs">
+        <button class="tmpl-tab active" onclick="switchLang('en',this)">🇬🇧 English</button>
+        <button class="tmpl-tab" onclick="switchLang('nl',this)">🇳🇱 Dutch</button>
+        <button class="tmpl-tab" onclick="switchLang('fr',this)">🇫🇷 French</button>
+        <button class="tmpl-tab" onclick="switchLang('de',this)">🇩🇪 German</button>
+      </div>
+
+      <!-- Stage tabs -->
+      <div class="tmpl-stage-tabs">
+        <button class="tmpl-stage active" onclick="switchStage('first',this)">1st Email</button>
+        <button class="tmpl-stage" onclick="switchStage('second',this)">2nd Email</button>
+      </div>
+
+      <textarea class="tmpl-editor" id="tmpl-editor" placeholder="Loading…"></textarea>
+      <br>
+      <button class="btn-save" onclick="saveTemplate()">💾 Save Template</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ TAB: SETTINGS ══════════════ -->
+  <div class="tab-pane" id="tab-settings">
+
+    <!-- Proxy -->
+    <div class="form-section">
+      <h3>🌐 Proxy</h3>
+      <div class="form-grid">
+        <div class="form-group" style="grid-column:1/-1;">
+          <label>Proxy Address</label>
+          <input id="cfg-proxy-server" type="text" placeholder="http://1.2.3.4:8888">
+        </div>
+        <div class="form-group">
+          <label>Username (optional)</label>
+          <input id="cfg-proxy-user" type="text" placeholder="proxyuser">
+        </div>
+        <div class="form-group">
+          <label>Password (optional)</label>
+          <input id="cfg-proxy-pass" type="password" placeholder="••••••••">
+        </div>
+      </div>
+    </div>
+
+    <!-- Telegram -->
+    <div class="form-section">
+      <h3>📢 Telegram — Notifications</h3>
+      <div class="form-grid">
+        <div class="form-group" style="grid-column:1/-1;">
+          <label>Bot Token</label>
+          <input id="cfg-tg-token" type="password" placeholder="123456:ABCdef…">
+        </div>
+        <div class="form-group" style="grid-column:1/-1;">
+          <label>Your Chat ID</label>
+          <input id="cfg-tg-chatid" type="text" placeholder="123456789">
+        </div>
+      </div>
+    </div>
+
+    <!-- Link bot -->
+    <div class="form-section">
+      <h3>🔗 Telegram — Link Generation Bot</h3>
+      <div class="form-grid">
+        <div class="form-group" style="grid-column:1/-1;">
+          <label>Link Bot Token</label>
+          <input id="cfg-link-token" type="password" placeholder="123456:ABCdef…">
+        </div>
+        <div class="form-group" style="grid-column:1/-1;">
+          <label>Link Bot API URL</label>
+          <input id="cfg-link-url" type="text" placeholder="https://your-api.com/generate">
+        </div>
+      </div>
+    </div>
+
+    <!-- Campaign limits -->
+    <div class="form-section">
+      <h3>⚡ Send Limits</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Emails per account per day</label>
+          <input id="cfg-daily" type="number" min="1" max="500">
+        </div>
+        <div class="form-group">
+          <label>Total emails per account (lifetime)</label>
+          <input id="cfg-total" type="number" min="1">
+        </div>
+        <div class="form-group">
+          <label>Min delay between sends (sec)</label>
+          <input id="cfg-delay-min" type="number" step="0.5" min="1">
+        </div>
+        <div class="form-group">
+          <label>Max delay between sends (sec)</label>
+          <input id="cfg-delay-max" type="number" step="0.5" min="1">
+        </div>
+        <div class="form-group">
+          <label>Parallel browser sessions</label>
+          <input id="cfg-conc" type="number" min="1" max="5">
+        </div>
+        <div class="form-group">
+          <label>Days before expired account deleted</label>
+          <input id="cfg-expiry" type="number" min="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- 2FA -->
+    <div class="form-section">
+      <h3>🔐 2FA Strategy (when no key stored)</h3>
+      <div class="form-group">
+        <label>Action</label>
+        <select id="cfg-2fa">
+          <option value="skip">Skip account & send Telegram alert (recommended)</option>
+          <option value="wait">Wait for manual input via SSH</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn-save" onclick="saveSettings()">💾 Save All Settings</button>
+
+  </div><!-- end tab-settings -->
 
 </main>
 
@@ -562,6 +795,109 @@ function escHtml(s) {
 // ── Auto-refresh every 30s ────────────────────────
 setInterval(() => { loadStats(); loadRecipients(); checkRunning(); }, 30000);
 setInterval(loadAccounts, 60000);
+
+// ── Tabs ──────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'settings') loadSettings();
+  if (name === 'templates') { loadTemplates(); }
+}
+
+// ── Settings ──────────────────────────────────────
+async function loadSettings() {
+  const d = await fetchJSON('/api/config');
+  const p = d.proxy || {};
+  const tg = d.telegram || {};
+  const c = d.campaign || {};
+  document.getElementById('cfg-proxy-server').value = p.server || '';
+  document.getElementById('cfg-proxy-user').value   = p.username || '';
+  document.getElementById('cfg-proxy-pass').value   = p.password || '';
+  document.getElementById('cfg-tg-token').value     = tg.bot_token || '';
+  document.getElementById('cfg-tg-chatid').value    = tg.chat_id || '';
+  document.getElementById('cfg-link-token').value   = tg.link_bot_token || '';
+  document.getElementById('cfg-link-url').value     = tg.link_bot_api_url || '';
+  document.getElementById('cfg-daily').value        = c.daily_limit || 100;
+  document.getElementById('cfg-total').value        = c.total_limit || 300;
+  document.getElementById('cfg-delay-min').value    = c.min_send_delay || 2;
+  document.getElementById('cfg-delay-max').value    = c.max_send_delay || 5;
+  document.getElementById('cfg-conc').value         = c.max_concurrent_senders || 2;
+  document.getElementById('cfg-expiry').value       = c.account_expiry_days || 3;
+  document.getElementById('cfg-2fa').value          = d.missing_2fa_strategy || 'skip';
+}
+
+async function saveSettings() {
+  const body = {
+    proxy: {
+      server:   document.getElementById('cfg-proxy-server').value,
+      username: document.getElementById('cfg-proxy-user').value,
+      password: document.getElementById('cfg-proxy-pass').value,
+    },
+    telegram: {
+      bot_token:       document.getElementById('cfg-tg-token').value,
+      chat_id:         document.getElementById('cfg-tg-chatid').value,
+      link_bot_token:  document.getElementById('cfg-link-token').value,
+      link_bot_api_url:document.getElementById('cfg-link-url').value,
+    },
+    campaign: {
+      daily_limit:           +document.getElementById('cfg-daily').value,
+      total_limit:           +document.getElementById('cfg-total').value,
+      min_send_delay:        +document.getElementById('cfg-delay-min').value,
+      max_send_delay:        +document.getElementById('cfg-delay-max').value,
+      max_concurrent_senders:+document.getElementById('cfg-conc').value,
+      account_expiry_days:   +document.getElementById('cfg-expiry').value,
+    },
+    missing_2fa_strategy: document.getElementById('cfg-2fa').value,
+    headless: true,
+  };
+  try {
+    await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    showToast('✅ Settings saved!');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+// ── Templates ─────────────────────────────────────
+let _tmplLang = 'en', _tmplStage = 'first', _tmplData = {};
+
+async function loadTemplates() {
+  _tmplData = await fetchJSON('/api/templates');
+  renderTmplEditor();
+}
+
+function renderTmplEditor() {
+  const key = _tmplLang + '_' + _tmplStage;
+  document.getElementById('tmpl-editor').value = _tmplData[key] || '';
+}
+
+function switchLang(lang, btn) {
+  _tmplLang = lang;
+  document.querySelectorAll('.tmpl-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTmplEditor();
+}
+
+function switchStage(stage, btn) {
+  _tmplStage = stage;
+  document.querySelectorAll('.tmpl-stage').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTmplEditor();
+}
+
+async function saveTemplate() {
+  const key = _tmplLang + '_' + _tmplStage;
+  const text = document.getElementById('tmpl-editor').value;
+  _tmplData[key] = text;
+  try {
+    await fetch('/api/templates/' + key, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text})
+    });
+    showToast('✅ Template saved!');
+  } catch(e) { showToast('❌ ' + e.message); }
+}
 
 // ── Init ──────────────────────────────────────────
 loadAll();
