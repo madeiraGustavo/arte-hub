@@ -70,6 +70,8 @@ class Config:
     headless: bool = True
     # If no 2fa_key: "skip" | "wait" (wait for manual input via stdin)
     missing_2fa_strategy: str = "skip"
+    # URL of the Telegram Mini App (must be HTTPS for Telegram Web Apps)
+    webapp_url: str = ""
 
     @classmethod
     def load(cls, path: str = "config.json") -> "Config":

@@ -126,8 +126,31 @@ class TelegramBot:
                 "Не понял команду. Отправьте /помощь для списка команд."
             )
 
+    async def send_with_app_button(self, text: str) -> None:
+        """Отправить сообщение с кнопкой открытия Mini App."""
+        webapp_url = getattr(self.config, 'webapp_url', '')
+        if webapp_url:
+            keyboard = {
+                "inline_keyboard": [[{
+                    "text": "📱 Открыть приложение",
+                    "web_app": {"url": webapp_url}
+                }]]
+            }
+        else:
+            keyboard = None
+        async with httpx.AsyncClient(timeout=15) as client:
+            payload = {
+                "chat_id": self.allowed_chat_id,
+                "text": text,
+                "parse_mode": "Markdown",
+            }
+            if keyboard:
+                import json as _json
+                payload["reply_markup"] = _json.dumps(keyboard)
+            await client.post(f"{self.api}/sendMessage", json=payload)
+
     async def cmd_start(self) -> None:
-        await self.send_to_owner(
+        await self.send_with_app_button(
             "👋 *Gmail Campaign Bot запущен!*\n\n"
             "Управляйте кампанией прямо из Telegram.\n\n"
             + HELP_TEXT

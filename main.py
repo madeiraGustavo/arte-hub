@@ -4,6 +4,7 @@ Gmail Campaign Automation — CLI entry point.
 
 Usage:
   python main.py bot                      # Start Telegram bot (управление через Telegram)
+  python main.py webapp [PORT]           # Запустить русский веб-интерфейс (порт по умолчанию 7788)
   python main.py wizard                   # Interactive setup (proxy, Telegram, templates)
   python main.py setup                    # Initialize DB and dirs
   python main.py import-accounts          # Import accounts from data/accounts/*.txt
@@ -144,6 +145,16 @@ def main() -> None:
             from src.telegram_bot_control import start_bot
             await start_bot(config)
         asyncio.run(_run_bot())
+    elif cmd == "webapp":
+        port = int(args[1]) if len(args) > 1 else 7788
+        try:
+            import uvicorn
+        except ImportError:
+            print("uvicorn required: pip install uvicorn")
+            sys.exit(1)
+        from src.webapp_ru import app as webapp_app
+        print(f"\n  Русский интерфейс запущен на порту {port}\n")
+        uvicorn.run(webapp_app, host="0.0.0.0", port=port, reload=False, log_level="warning")
     elif cmd == "wizard":
         from src.wizard import run_wizard
         run_wizard()
