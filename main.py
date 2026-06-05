@@ -106,10 +106,12 @@ def cmd_dashboard(config: Config, port: int = 8080) -> None:
     except ImportError:
         print("uvicorn is required: pip install uvicorn")
         sys.exit(1)
+    # Import the actual app object so uvicorn uses the correct port
+    from src.dashboard import app as dashboard_app
     print(f"\n  Dashboard running at  http://0.0.0.0:{port}")
     print(f"  Open in browser:      http://YOUR_SERVER_IP:{port}\n")
     uvicorn.run(
-        "src.dashboard:app",
+        dashboard_app,
         host="0.0.0.0",
         port=port,
         reload=False,
