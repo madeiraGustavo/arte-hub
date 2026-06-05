@@ -10,6 +10,7 @@ Usage:
   python main.py check-replies            # Check inboxes for replies now
   python main.py maintenance              # Run maintenance + stats
   python main.py scheduler               # Start the scheduler daemon
+  python main.py dashboard [PORT]        # Start web dashboard (default: port 8080)
   python main.py stats                    # Print current DB stats
 """
 from __future__ import annotations
@@ -98,6 +99,23 @@ def cmd_scheduler(config: Config) -> None:
     asyncio.run(run_scheduler(config))
 
 
+def cmd_dashboard(config: Config, port: int = 8080) -> None:
+    try:
+        import uvicorn  # type: ignore
+    except ImportError:
+        print("uvicorn is required: pip install uvicorn")
+        sys.exit(1)
+    print(f"\n  Dashboard running at  http://0.0.0.0:{port}")
+    print(f"  Open in browser:      http://YOUR_SERVER_IP:{port}\n")
+    uvicorn.run(
+        "src.dashboard:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        log_level="warning",
+    )
+
+
 def cmd_stats(config: Config) -> None:
     stats = get_daily_stats(config.paths.db_path)
     print("\n=== Campaign Stats ===")
@@ -134,6 +152,9 @@ def main() -> None:
         cmd_maintenance(config)
     elif cmd == "scheduler":
         cmd_scheduler(config)
+    elif cmd == "dashboard":
+        port = int(args[1]) if len(args) > 1 else 8080
+        cmd_dashboard(config, port)
     elif cmd == "stats":
         cmd_stats(config)
     else:
