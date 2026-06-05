@@ -54,16 +54,38 @@ class TelegramBot:
         self.api = f"https://api.telegram.org/bot{token}"
         self.offset = 0
 
-    async def send(self, chat_id: str, text: str, parse_mode: str = "Markdown") -> None:
-        async with httpx.AsyncClient(timeout=15) as client:
-            await client.post(f"{self.api}/sendMessage", json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-            })
+    def _main_keyboard(self) -> dict:
+        """Постоянная клавиатура с кнопками."""
+        webapp_url = getattr(self.config, 'webapp_url', '')
+        buttons = [
+            [{"text": "📊 Статистика"}, {"text": "👥 Аккаунты"}],
+            [{"text": "▶ Запустить рассылку"}, {"text": "🔍 Проверить ответы"}],
+            [{"text": "⚙ Обслуживание"}, {"text": "📋 Логи"}],
+            [{"text": "📎 Загрузить получателей (Excel)"}, {"text": "📎 Добавить аккаунты (.txt)"}],
+        ]
+        if webapp_url:
+            buttons.append([{"text": "📱 Открыть приложение", "web_app": {"url": webapp_url}}])
+        return {
+            "keyboard": buttons,
+            "resize_keyboard": True,
+            "persistent": True,
+        }
 
-    async def send_to_owner(self, text: str) -> None:
-        await self.send(self.allowed_chat_id, text)
+    async def send(self, chat_id: str, text: str, parse_mode: str = "Markdown",
+                   with_keyboard: bool = False) -> None:
+        payload: dict = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+        }
+        if with_keyboard:
+            import json as _json
+            payload["reply_markup"] = _json.dumps(self._main_keyboard())
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(f"{self.api}/sendMessage", json=payload)
+
+    async def send_to_owner(self, text: str, with_keyboard: bool = False) -> None:
+        await self.send(self.allowed_chat_id, text, with_keyboard=with_keyboard)
 
     async def get_updates(self) -> list:
         try:
@@ -94,36 +116,39 @@ class TelegramBot:
             await self.handle_document(msg)
             return
 
-        text = msg.get("text", "").strip().lower()
+        text = msg.get("text", "").strip()
+        text_lower = text.lower()
 
-        if text in ("/start", "/старт", "старт"):
+        if text_lower in ("/start", "/старт", "старт"):
             await self.cmd_start()
-        elif text in ("/стат", "/stats", "/stat"):
+        elif text_lower in ("/стат", "/stats", "/stat", "📊 статистика"):
             await self.cmd_stats()
-        elif text in ("/аккаунты", "/accounts"):
+        elif text_lower in ("/аккаунты", "/accounts", "👥 аккаунты"):
             await self.cmd_accounts()
-        elif text in ("/рассылка", "/blast"):
+        elif text_lower in ("/рассылка", "/blast", "▶ запустить рассылку"):
             await self.cmd_blast()
-        elif text in ("/ответы", "/replies", "/check"):
+        elif text_lower in ("/ответы", "/replies", "/check", "🔍 проверить ответы"):
             await self.cmd_replies()
-        elif text in ("/обслуж", "/maintenance"):
+        elif text_lower in ("/обслуж", "/maintenance", "⚙ обслуживание"):
             await self.cmd_maintenance()
-        elif text in ("/загрузить", "/upload"):
+        elif text_lower in ("/логи", "📋 логи"):
+            await self.cmd_logs()
+        elif text_lower in ("/загрузить", "/upload", "📎 загрузить получателей (excel)"):
             await self.send_to_owner(
                 "📎 Отправьте Excel файл (.xlsx) с получателями прямо в этот чат.\n"
                 "Формат: колонка A — email, колонка B — тема письма."
             )
-        elif text in ("/добавить", "/addaccounts"):
+        elif text_lower in ("/добавить", "/addaccounts", "📎 добавить аккаунты (.txt)"):
             await self.send_to_owner(
                 "📎 Отправьте .txt файл с аккаунтами прямо в этот чат.\n"
                 "Формат каждой строки:\n`email:пароль:запасная@почта:2fa_ключ`\n"
                 "или без 2FA:\n`email:пароль:запасная@почта`"
             )
-        elif text in ("/помощь", "/help"):
-            await self.send_to_owner(HELP_TEXT)
+        elif text_lower in ("/помощь", "/help"):
+            await self.send_to_owner(HELP_TEXT, with_keyboard=True)
         else:
             await self.send_to_owner(
-                "Не понял команду. Отправьте /помощь для списка команд."
+                "Нажмите на одну из кнопок ниже 👇", with_keyboard=True
             )
 
     async def send_with_app_button(self, text: str) -> None:
@@ -150,10 +175,10 @@ class TelegramBot:
             await client.post(f"{self.api}/sendMessage", json=payload)
 
     async def cmd_start(self) -> None:
-        await self.send_with_app_button(
+        await self.send_to_owner(
             "👋 *Gmail Campaign Bot запущен!*\n\n"
-            "Управляйте кампанией прямо из Telegram.\n\n"
-            + HELP_TEXT
+            "Используйте кнопки ниже для управления 👇",
+            with_keyboard=True
         )
 
     async def cmd_stats(self) -> None:
@@ -230,6 +255,25 @@ class TelegramBot:
             await self.send_to_owner(f"❌ Ошибка проверки: {exc}")
         finally:
             _running["replies"] = False
+
+    async def cmd_logs(self) -> None:
+        import sqlite3
+        conn = sqlite3.connect(self.config.paths.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ts, level, account, message FROM logs ORDER BY id DESC LIMIT 10"
+        ).fetchall()
+        conn.close()
+        if not rows:
+            await self.send_to_owner("📋 Логов пока нет")
+            return
+        icons = {"INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌"}
+        lines = ["*Последние 10 событий:*\n"]
+        for r in rows:
+            icon = icons.get(r["level"], "•")
+            acc = f" [{r['account'].split('@')[0]}]" if r["account"] else ""
+            lines.append(f"{icon}{acc} {r['message'][:80]}")
+        await self.send_to_owner("\n".join(lines))
 
     async def cmd_maintenance(self) -> None:
         await self.send_to_owner("⚙️ Запускаю обслуживание...")
@@ -314,7 +358,10 @@ class TelegramBot:
 
     async def run_polling(self) -> None:
         log.info("Telegram bot started (polling)")
-        await self.send_to_owner("🟢 *Бот запущен и готов к работе!*\n\nОтправьте /помощь для списка команд.")
+        await self.send_to_owner(
+            "🟢 *Бот запущен и готов к работе!*\n\nИспользуйте кнопки ниже 👇",
+            with_keyboard=True
+        )
         while True:
             updates = await self.get_updates()
             for update in updates:
