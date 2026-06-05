@@ -1,0 +1,13 @@
+SUBJECT: Re: {{subject}}
+
+Guten Tag,
+
+herzlichen Dank für Ihre Antwort — es freut mich sehr, dass Sie sich die Zeit genommen haben.
+
+Wie versprochen, hier ist Ihr persönlicher Link mit weiteren Informationen zu unserem Angebot:
+
+{{unique_link}}
+
+Zögern Sie nicht, mich zu kontaktieren, falls Sie Fragen haben. Ich helfe Ihnen gerne weiter.
+
+Mit freundlichen Grüßen

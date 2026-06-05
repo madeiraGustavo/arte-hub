@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# Data (never commit real credentials or data)
+data/
+profiles/
+logs/
+config.json
+
+# OS
+.DS_Store
+*.swp

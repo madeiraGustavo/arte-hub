@@ -1,0 +1,33 @@
+{
+  "proxy": {
+    "server": "http://YOUR_PROXY_IP:PORT",
+    "username": "proxy_user",
+    "password": "proxy_password"
+  },
+  "telegram": {
+    "bot_token": "YOUR_NOTIFICATION_BOT_TOKEN",
+    "chat_id": "YOUR_TELEGRAM_CHAT_ID",
+    "link_bot_token": "YOUR_LINK_BOT_TOKEN",
+    "link_bot_api_url": "https://your-link-api.example.com/generate"
+  },
+  "campaign": {
+    "daily_limit": 100,
+    "total_limit": 300,
+    "account_expiry_days": 3,
+    "min_send_delay": 2.0,
+    "max_send_delay": 5.0,
+    "reply_check_intervals": [60, 180, 360],
+    "max_concurrent_senders": 2,
+    "send_timeout_seconds": 30
+  },
+  "paths": {
+    "db_path": "data/campaign.db",
+    "profiles_dir": "profiles",
+    "logs_dir": "logs",
+    "templates_dir": "templates",
+    "accounts_dir": "data/accounts",
+    "recipients_dir": "data/recipients"
+  },
+  "headless": true,
+  "missing_2fa_strategy": "skip"
+}

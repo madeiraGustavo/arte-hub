@@ -1,0 +1,13 @@
+SUBJECT: Re: {{subject}}
+
+Hello,
+
+Thank you so much for your reply — I really appreciate you taking the time.
+
+As promised, here is your personal link with more information about our offer:
+
+{{unique_link}}
+
+Please feel free to reach out if you have any questions. I would be delighted to assist.
+
+Warm regards

@@ -1,0 +1,18 @@
+# Core browser automation
+playwright>=1.44.0
+playwright-stealth>=1.0.6
+
+# 2FA / TOTP (offline, no browser needed for code generation)
+pyotp>=2.9.0
+
+# Excel reading
+openpyxl>=3.1.2
+
+# HTTP client (Telegram API, link generation)
+httpx>=0.27.0
+
+# Task scheduling daemon
+apscheduler>=3.10.4
+
+# Optional: nicer CLI output
+rich>=13.7.0

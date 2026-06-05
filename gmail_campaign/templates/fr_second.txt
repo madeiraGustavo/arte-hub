@@ -1,0 +1,13 @@
+SUBJECT: Re: {{subject}}
+
+Bonjour,
+
+Merci beaucoup pour votre réponse — j'apprécie vraiment le temps que vous y avez consacré.
+
+Comme promis, voici votre lien personnel avec plus d'informations sur notre offre :
+
+{{unique_link}}
+
+N'hésitez pas à me contacter si vous avez des questions. Je serai ravi de vous aider.
+
+Cordialement
