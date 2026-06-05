@@ -3,6 +3,7 @@
 Gmail Campaign Automation — CLI entry point.
 
 Usage:
+  python main.py bot                      # Start Telegram bot (управление через Telegram)
   python main.py wizard                   # Interactive setup (proxy, Telegram, templates)
   python main.py setup                    # Initialize DB and dirs
   python main.py import-accounts          # Import accounts from data/accounts/*.txt
@@ -138,7 +139,12 @@ def main() -> None:
 
     cmd = args[0].lower()
 
-    if cmd == "wizard":
+    if cmd == "bot":
+        async def _run_bot():
+            from src.telegram_bot_control import start_bot
+            await start_bot(config)
+        asyncio.run(_run_bot())
+    elif cmd == "wizard":
         from src.wizard import run_wizard
         run_wizard()
     elif cmd == "setup":
