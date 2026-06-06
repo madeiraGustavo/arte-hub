@@ -60,7 +60,22 @@ USER_AGENTS = [
 LOCALES = ["nl-NL", "fr-FR", "de-DE", "en-GB", "en-US", "nl-BE", "fr-BE"]
 
 
-def _random_fingerprint(seed: str) -> dict:
+async def _js_click_by_text(page, *texts) -> bool:
+    """Click a button/link by its text using JS (bypasses overlay divs)."""
+    texts_json = str(list(t.lower() for t in texts))
+    return await page.evaluate(f"""
+        () => {{
+            const texts = {texts_json};
+            const els = document.querySelectorAll('button, a, div[role="button"], span[role="button"]');
+            for (const el of els) {{
+                const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+                for (const needle of texts) {{
+                    if (t.includes(needle)) {{ el.click(); return true; }}
+                }}
+            }}
+            return false;
+        }}
+    """)
     rng = random.Random(seed)
     w, h = rng.choice(VIEWPORTS)
     return {
@@ -244,33 +259,23 @@ class GmailAutomation:
                     logger.info("[%s] reCAPTCHA detected (attempt %d) — solving…",
                                 self.email, attempt + 1)
 
-                    # After 2 failed attempts try "Another method" (recovery email)
+                    # After 2 failed attempts try "Another method" via JS click
                     if attempt >= 2:
-                        other_method = page.locator(
-                            'button:has-text("another method"), '
-                            'a:has-text("another method"), '
-                            'button:has-text("autre méthode"), '
-                            'a:has-text("autre méthode"), '
-                            'button:has-text("andere Methode"), '
-                            'button:has-text("andere methode")'
-                        ).first
-                        if await other_method.count() > 0:
-                            await other_method.click()
+                        clicked = await _js_click_by_text(page,
+                            "another method", "autre méthode", "andere methode",
+                            "andere methode", "try another", "essayer une autre"
+                        )
+                        if clicked:
+                            logger.info("[%s] Clicked 'another method'", self.email)
                             await _delay(2, 3)
                             # Try recovery email option
-                            recovery_opt = page.locator(
-                                'li:has-text("email"), li:has-text("mail")'
-                            ).first
-                            if await recovery_opt.count() > 0:
-                                await recovery_opt.click()
-                                await _delay(2, 3)
-                            logger.info("[%s] Switched to alternative method", self.email)
+                            await _js_click_by_text(page, "email", "mail", "e-mail")
+                            await _delay(2, 3)
                             continue
 
                     solved = await self._solve_login_recaptcha(page)
                     if solved:
                         await _delay(2, 4)
-                        # Use JS click to bypass overlay div intercepting pointer events
                         clicked = await page.evaluate("""
                             () => {
                                 const byName = document.querySelector(
@@ -291,11 +296,7 @@ class GmailAutomation:
                         await _delay(3, 5)
                         continue
                     else:
-                        logger.error(
-                            "[%s] reCAPTCHA not solved. "
-                            "Check captcha.api_key in config.yaml",
-                            self.email,
-                        )
+                        logger.error("[%s] reCAPTCHA not solved", self.email)
                         return False
 
                 # Account not found
@@ -310,14 +311,11 @@ class GmailAutomation:
                     logger.info("[%s] Password field found ✓", self.email)
                     break
 
-                # "Next" button still on screen?
-                next_btn = page.locator(
-                    'button:has-text("Next"), div[role="button"]:has-text("Next"), '
-                    'button:has-text("Suivant"), button:has-text("Weiter"), '
-                    'button:has-text("Далее")'
-                ).first
-                if await next_btn.count() > 0 and await next_btn.is_visible():
-                    await next_btn.click()
+                # "Next" button still on screen? Use JS click
+                next_clicked = await _js_click_by_text(page,
+                    "next", "suivant", "weiter", "далее", "avanti", "siguiente"
+                )
+                if next_clicked:
                     await _delay(3, 5)
                     continue
 
