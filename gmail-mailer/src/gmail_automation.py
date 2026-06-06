@@ -211,47 +211,59 @@ class GmailAutomation:
 
             # ---- Detect what appeared ----
             for attempt in range(4):
-                content = (await page.content()).lower()
+                # Use inner_text (rendered text) not page.content() (raw HTML)
+                # to avoid Unicode apostrophe mismatch issues
+                try:
+                    page_text = (await page.inner_text("body")).lower()
+                except Exception:
+                    page_text = ""
 
-                # Save screenshot for debugging
+                # Save screenshot
                 try:
                     import os as _os
                     _os.makedirs("logs", exist_ok=True)
-                    await page.screenshot(path=f"logs/login_{self.email.split('@')[0]}_{attempt}.png")
+                    await page.screenshot(
+                        path=f"logs/login_{self.email.split('@')[0]}_{attempt}.png"
+                    )
                 except Exception:
                     pass
 
-                # "Not a robot" reCAPTCHA page — handle it
-                if any(s in content for s in [
-                    "confirmez que vous n'êtes pas un robot",
-                    "confirm you're not a robot",
-                    "bestätigen sie, dass sie kein robot sind",
-                    "bevestig dat u geen robot bent",
-                    "not a robot",
-                ]):
-                    logger.info("[%s] reCAPTCHA challenge detected — attempting solve", self.email)
+                logger.info("[%s] Login page (attempt %d): %s",
+                            self.email, attempt + 1, page_text[:300].replace("\n", " "))
+
+                # reCAPTCHA / "not a robot" page — simple keywords, no apostrophes
+                captcha_keywords = [
+                    "pas un robot",        # French
+                    "not a robot",         # English
+                    "kein robot",          # German
+                    "geen robot",          # Dutch
+                    "confirmez que vous",  # French fallback
+                    "confirm you",         # English fallback
+                ]
+                if any(kw in page_text for kw in captcha_keywords):
+                    logger.info("[%s] reCAPTCHA detected — solving…", self.email)
                     solved = await self._solve_login_recaptcha(page)
                     if solved:
                         await _delay(2, 4)
-                        # Click "Next/Suivant" button after captcha
                         next_btn = page.locator(
                             'button:has-text("Next"), button:has-text("Suivant"), '
                             'button:has-text("Weiter"), button:has-text("Далее"), '
                             'div[role="button"]:has-text("Suivant")'
                         ).first
-                        if await next_btn.count() > 0:
+                        if await next_btn.count() > 0 and await next_btn.is_visible():
                             await next_btn.click()
                             await _delay(3, 5)
                         continue
                     else:
                         logger.error(
-                            "[%s] reCAPTCHA not solved — add rucaptcha api_key to config.yaml",
-                            self.email
+                            "[%s] reCAPTCHA not solved. "
+                            "Check captcha.api_key in config.yaml",
+                            self.email,
                         )
                         return False
 
                 # Account not found
-                if "couldn't find" in content or "no account found" in content:
+                if "couldn't find" in page_text or "no account" in page_text:
                     logger.error("[%s] Google account not found", self.email)
                     await self.db.set_account_status(self.email, "error", notes="account not found")
                     return False
@@ -259,14 +271,10 @@ class GmailAutomation:
                 # Password field visible?
                 pwd_input = page.locator('input[type="password"]')
                 if await pwd_input.count() > 0 and await pwd_input.first.is_visible():
-                    logger.info("[%s] Password field found on attempt %d", self.email, attempt + 1)
+                    logger.info("[%s] Password field found ✓", self.email)
                     break
 
-                # Log page content for debugging
-                page_text = (await page.inner_text("body"))[:400].replace("\n", " ")
-                logger.info("[%s] Login page (attempt %d): %s", self.email, attempt + 1, page_text)
-
-                # "Next" button still visible?
+                # "Next" button still on screen?
                 next_btn = page.locator(
                     'button:has-text("Next"), div[role="button"]:has-text("Next"), '
                     'button:has-text("Suivant"), button:has-text("Weiter"), '
@@ -277,7 +285,7 @@ class GmailAutomation:
                     await _delay(3, 5)
                     continue
 
-                await _delay(5, 8)
+                await _delay(5, 7)
 
             # ---- Password step ----
             pwd_input = page.locator('input[type="password"]')
