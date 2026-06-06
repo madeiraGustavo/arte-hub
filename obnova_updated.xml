@@ -5203,33 +5203,6 @@ section(RESOURCE_1 /*{{threads}}*/,1000000 /*1000000*/,1000000 /*1000000*/,0,fun
             sleep(4000)!
             section_end()!
 
-            section_start("", 131994523)!
-            native("keyboard", "hotkeys", "CTRL+A")!
-            section_end()!
-
-            section_start("", 200604502)!
-            /*Dat:eyJzIjoic2xlZXAiLCJ2IjoxLCJmIjpbXSwidXciOiIwIiwidXQiOiIwIiwidXRvIjoiMCIsInVtIjoiMCIsInVlIjoiMCIsInVzcCI6IjAiLCJkIjpbeyJpZCI6IlRpbWUiLCJ0eXBlIjoiY29uc3RyIiwiZGF0YSI6IjUwMCIsImNsYXNzIjoiaW50IiwiaXNkZWYiOmZhbHNlfV19*/
-            sleep(500)!
-            section_end()!
-
-            section_start("", 334760738)!
-            _type("function sendEmails() {\n  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n  var data = sheet.getDataRange().getValues();\n  var msg = \"Hej, jag har sett er annons pa Blocket och skulle vilja kopa den av er.\";\n  for (var i = 0; i < data.length; i++) {\n    var email = data[i][0];\n    var subject = data[i][1];\n    if (email && subject) {\n      GmailApp.sendEmail(email, subject, subject + \"\\n\\n\" + msg);\n    }\n  }\n  Logger.log(\"Done\");\n}", 0)!
-            section_end()!
-
-            section_start("", 349817734)!
-            /*Dat:eyJzIjoic2xlZXAiLCJ2IjoxLCJmIjpbXSwidXciOiIwIiwidXQiOiIwIiwidXRvIjoiMCIsInVtIjoiMCIsInVlIjoiMCIsInVzcCI6IjAiLCJkIjpbeyJpZCI6IlRpbWUiLCJ0eXBlIjoiY29uc3RyIiwiZGF0YSI6IjEwMDAiLCJjbGFzcyI6ImludCIsImlzZGVmIjpmYWxzZX1dfQ==*/
-            sleep(1000)!
-            section_end()!
-
-            section_start("", 642621108)!
-            native("keyboard", "hotkeys", "CTRL+S")!
-            section_end()!
-
-            section_start("", 746412689)!
-            /*Dat:eyJzIjoic2xlZXAiLCJ2IjoxLCJmIjpbXSwidXciOiIwIiwidXQiOiIwIiwidXRvIjoiMCIsInVtIjoiMCIsInVlIjoiMCIsInVzcCI6IjAiLCJkIjpbeyJpZCI6IlRpbWUiLCJ0eXBlIjoiY29uc3RyIiwiZGF0YSI6IjIwMDAiLCJjbGFzcyI6ImludCIsImlzZGVmIjpmYWxzZX1dfQ==*/
-            sleep(2000)!
-            section_end()!
-
             section_start("", 128492780)!
             ;_SELECTOR=" >XPATH> //run-button//button | //*[@aria-label='Run'] | //*[@id='run-button']";
             waiter_nofail_next();waiter_timeout_next(5000);
