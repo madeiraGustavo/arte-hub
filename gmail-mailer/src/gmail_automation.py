@@ -355,57 +355,76 @@ class GmailAutomation:
 
     async def _solve_login_recaptcha(self, page: Page) -> bool:
         """
-        Handle reCAPTCHA on Google login page.
-        1. Try clicking the checkbox (works for simple 'I'm not a robot')
-        2. If still showing, use RuCaptcha solver (requires api_key in config)
+        Handle Google's 'Confirm you're not a robot' page.
+        Google uses its own custom checkbox — not a standard reCAPTCHA with sitekey.
+        Strategy: find and click any checkbox, then let outer loop verify if it worked.
         """
-        # Try clicking reCAPTCHA checkbox inside iframe
+        import re as _re
+
+        # Strategy 1: Click any checkbox on the page directly (Google's own widget)
+        try:
+            checkbox_selectors = [
+                'input[type="checkbox"]',
+                'div[role="checkbox"]',
+                'span[role="checkbox"]',
+                '[jsname="YPqjbf"]',
+                '[jsname="B34EJ"]',
+                '.checkboxFocusRing',
+            ]
+            for sel in checkbox_selectors:
+                els = page.locator(sel)
+                if await els.count() > 0:
+                    el = els.first
+                    if await el.is_visible():
+                        await el.click(force=True)
+                        await _delay(1, 2)
+                        logger.info("[%s] Checkbox clicked: %s", self.email, sel)
+                        pt = (await page.inner_text("body")).lower()
+                        if "pas un robot" not in pt and "not a robot" not in pt:
+                            logger.info("[%s] Challenge cleared by checkbox!", self.email)
+                            return True
+                        break
+        except Exception as exc:
+            logger.debug("[%s] Checkbox click: %s", self.email, exc)
+
+        # Strategy 2: reCAPTCHA iframe checkbox
         try:
             rc_frame = page.frame_locator(
-                'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], '
-                'iframe[title*="recaptcha"]'
+                'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]'
             ).first
             checkbox = rc_frame.locator(
-                '#recaptcha-anchor, .recaptcha-checkbox, '
-                '[role="checkbox"], .rc-anchor-center-item'
+                '#recaptcha-anchor, .recaptcha-checkbox, [role="checkbox"]'
             ).first
             if await checkbox.count() > 0:
                 await checkbox.click()
                 await _delay(3, 5)
-                logger.info("[%s] reCAPTCHA checkbox clicked", self.email)
-
-                # Check if solved (checkbox turns green / challenge disappears)
-                content = (await page.content()).lower()
-                if "not a robot" not in content and "confirmez" not in content:
+                logger.info("[%s] reCAPTCHA iframe checkbox clicked", self.email)
+                pt = (await page.inner_text("body")).lower()
+                if "pas un robot" not in pt and "not a robot" not in pt:
                     return True
         except Exception as exc:
-            logger.debug("[%s] reCAPTCHA checkbox click failed: %s", self.email, exc)
+            logger.debug("[%s] reCAPTCHA iframe: %s", self.email, exc)
 
-        # Fallback: use RuCaptcha/2captcha solver
+        # Strategy 3: RuCaptcha if sitekey found
         if self._captcha_solver:
-            # Find sitekey
             src = await page.content()
-            import re as _re
             m = _re.search(r'data-sitekey=["\']([^"\']+)["\']', src)
             if not m:
-                # Try finding it in recaptcha iframe URL
                 for frame in page.frames:
                     if "recaptcha" in frame.url:
                         fm = _re.search(r'[?&]k=([^&]+)', frame.url)
                         if fm:
                             m = fm
                             break
-
             if m:
                 site_key = m.group(1)
-                logger.info("[%s] Solving reCAPTCHA via service (key=%s…)", self.email, site_key[:10])
+                logger.info("[%s] Solving via RuCaptcha (key=%s…)", self.email, site_key[:10])
                 token = await self._captcha_solver.solve_recaptcha_v2(site_key, page.url)
                 if token:
                     await page.evaluate(
                         """(token) => {
                             const el = document.querySelector('[name="g-recaptcha-response"]');
                             if (el) el.value = token;
-                            // Trigger callback if available
                             try {
                                 const id = Object.keys(___grecaptcha_cfg.clients)[0];
                                 const cb = ___grecaptcha_cfg.clients[id]?.U?.callback
@@ -417,16 +436,11 @@ class GmailAutomation:
                     )
                     await _delay(2, 3)
                     return True
-            else:
-                logger.warning("[%s] reCAPTCHA sitekey not found", self.email)
-        else:
-            logger.warning(
-                "[%s] reCAPTCHA needs solving but no captcha solver configured. "
-                "Add your rucaptcha.com API key to config.yaml → captcha.api_key",
-                self.email,
-            )
 
-        return False
+        # No sitekey found — Google's own checkbox (already tried above)
+        # Return True to let the outer loop try clicking Next and re-check
+        logger.info("[%s] No sitekey — trying Next after checkbox attempt", self.email)
+        return True
 
     async def _handle_post_password(self, page: Page) -> bool:
         content = (await page.content()).lower()
