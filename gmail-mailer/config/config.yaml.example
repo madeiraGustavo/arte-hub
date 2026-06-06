@@ -1,0 +1,53 @@
+# Gmail Mass Mailer — Configuration
+# Copy this to config.yaml and fill in your values
+
+proxy:
+  server: "http://your-proxy-host:port"
+  username: "proxy_user"
+  password: "proxy_pass"
+  # Supported schemes: http, https, socks5
+  # Example residential: "socks5://user:pass@gate.proxy.provider:1080"
+
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  admin_chat_id: 123456789           # Your personal chat ID for notifications
+  link_bot_token: "LINK_BOT_TOKEN"   # Bot that generates unique links
+  link_bot_chat_id: 123456789        # Chat ID for link requests
+
+# Sending limits
+limits:
+  daily_per_account: 100             # Max emails per account per day
+  total_per_account: 300             # Lifetime limit per account (3 days × 100)
+  days_before_account_removal: 3     # After exhaustion, remove after N days
+  send_delay_min: 2                  # Minimum seconds between sends
+  send_delay_max: 5                  # Maximum seconds between sends
+  concurrent_accounts: 2             # How many accounts work in parallel
+
+# Reply checking schedule (hours after which to check for replies)
+reply_check_hours: [1, 3, 8]
+
+# Main sending window (cron-like, 24h)
+send_hour: 9          # Start sending at 9:00
+send_minute: 0
+
+# Paths
+paths:
+  accounts_file: "data/accounts.txt"
+  recipients_excel: "data/recipients.xlsx"
+  profiles_dir: "profiles"
+  db_file: "data/state.db"
+  logs_dir: "logs"
+
+# Browser settings
+browser:
+  headless: true
+  slow_mo: 50               # ms between actions (human-like)
+  viewport_width: 1366
+  viewport_height: 768
+  timezone: "Europe/Amsterdam"
+
+# Anti-detection: rotate these per account
+fingerprint:
+  randomize_viewport: true
+  randomize_locale: true
+  use_stealth: true

@@ -1,0 +1,22 @@
+[Unit]
+Description=Gmail Mass Mailer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mailer
+WorkingDirectory=/opt/gmail-mailer
+Environment=MAILER_CONFIG=/opt/gmail-mailer/config/config.yaml
+ExecStart=/opt/gmail-mailer/venv/bin/python main.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gmail-mailer
+
+# Allow the process enough memory for Chromium
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

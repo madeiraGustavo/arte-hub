@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+config/config.yaml
+data/state.db
+data/accounts.txt
+data/recipients.xlsx
+profiles/
+logs/
+venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
