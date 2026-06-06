@@ -241,19 +241,42 @@ class GmailAutomation:
                     "confirm you",         # English fallback
                 ]
                 if any(kw in page_text for kw in captcha_keywords):
-                    logger.info("[%s] reCAPTCHA detected — solving…", self.email)
+                    logger.info("[%s] reCAPTCHA detected (attempt %d) — solving…",
+                                self.email, attempt + 1)
+
+                    # After 2 failed attempts try "Another method" (recovery email)
+                    if attempt >= 2:
+                        other_method = page.locator(
+                            'button:has-text("another method"), '
+                            'a:has-text("another method"), '
+                            'button:has-text("autre méthode"), '
+                            'a:has-text("autre méthode"), '
+                            'button:has-text("andere Methode"), '
+                            'button:has-text("andere methode")'
+                        ).first
+                        if await other_method.count() > 0:
+                            await other_method.click()
+                            await _delay(2, 3)
+                            # Try recovery email option
+                            recovery_opt = page.locator(
+                                'li:has-text("email"), li:has-text("mail")'
+                            ).first
+                            if await recovery_opt.count() > 0:
+                                await recovery_opt.click()
+                                await _delay(2, 3)
+                            logger.info("[%s] Switched to alternative method", self.email)
+                            continue
+
                     solved = await self._solve_login_recaptcha(page)
                     if solved:
                         await _delay(2, 4)
                         # Use JS click to bypass overlay div intercepting pointer events
                         clicked = await page.evaluate("""
                             () => {
-                                // Try by jsname first (Google's "Next" button)
                                 const byName = document.querySelector(
                                     'button[jsname="LgbsSe"], button[jsname="qABHAb"]'
                                 );
                                 if (byName) { byName.click(); return true; }
-                                // Try by text
                                 const all = document.querySelectorAll('button, div[role="button"]');
                                 for (const el of all) {
                                     const t = (el.innerText || '').trim().toLowerCase();
