@@ -88,9 +88,12 @@ class SendWave:
                         return
 
                 # ── Step 2: Send via SMTP ─────────────────────────────────────
+                # Use App Password if available (required when 2FA is on),
+                # fall back to main password if App Password was not generated
+                smtp_pwd = await self.db.get_smtp_password(acct_email)
                 smtp = SMTPSender(
                     account_email=acct_email,
-                    password=account["password"],
+                    password=smtp_pwd or account["password"],
                 )
 
                 sent_emails: list[str] = []

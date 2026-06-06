@@ -64,9 +64,12 @@ class ReplyChecker:
                 expected = [r["email"] for r in my_recipients]
 
                 # ── IMAP reply check (fast, no browser) ──────────────────────
+                smtp_pwd = await self.db.get_smtp_password(acct_email)
+                imap_password = smtp_pwd or acc["password"]
+
                 replied = await check_replies_imap(
                     account_email=acct_email,
-                    password=acc["password"],
+                    password=imap_password,
                     expected_senders=expected,
                     since_days=7,
                 )
@@ -79,9 +82,10 @@ class ReplyChecker:
                     total_replies += len(replied)
 
                 # ── Send second emails via SMTP ───────────────────────────────
+                smtp_pwd = await self.db.get_smtp_password(acct_email)
                 smtp = SMTPSender(
                     account_email=acct_email,
-                    password=acc["password"],
+                    password=smtp_pwd or acc["password"],
                 )
                 smtp_ok = await smtp.connect()
                 if not smtp_ok:

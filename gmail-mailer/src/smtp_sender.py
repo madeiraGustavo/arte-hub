@@ -4,23 +4,26 @@ SMTP sender — sends emails directly via smtp.gmail.com:587 (STARTTLS).
 This is the same mechanism as Google Apps Script's GmailApp.sendEmail().
 - No browser needed → 10-20× faster than Playwright compose
 - 100 emails per account in ~1-2 minutes (vs ~7 minutes via browser)
-- Supports HTML body, custom From display name, Reply-To
+- Proper email headers (Message-ID, Date, MIME) to maximise deliverability
 - Handles App Passwords (required when 2FA is enabled on the account)
 
-Rate limiting:
-  Gmail allows ~500 emails/day via SMTP for regular accounts.
-  We stay well under that (max 100/day by design).
-  Between sends we pause 0.5–1.5 s — enough to look non-robotic.
+Spam score improvements:
+  - multipart/alternative (HTML + plain text fallback) — required
+  - Proper Message-ID in <random@gmail.com> format
+  - X-Mailer header omitted (no robot fingerprint)
+  - Content-Transfer-Encoding: quoted-printable (correct for non-ASCII)
 """
 from __future__ import annotations
 
 import asyncio
+import email.utils
 import logging
 import random
+import re
+import string
 import time
-from email.headerregistry import Address
 from email.message import EmailMessage
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import aiosmtplib
 
@@ -30,11 +33,18 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 
 
+def _make_message_id(sender_email: str) -> str:
+    """Generate a proper RFC-5322 Message-ID."""
+    rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=20))
+    ts = int(time.time())
+    domain = sender_email.split("@")[-1]
+    return f"<{rand}.{ts}@{domain}>"
+
+
 class SMTPSender:
     """
     Async SMTP sender for one Gmail account.
-    Keeps a single authenticated connection open for the whole batch
-    (same as GmailApp does internally) — very fast.
+    Keeps a single authenticated connection open for the whole batch.
     """
 
     def __init__(
@@ -65,7 +75,7 @@ class SMTPSender:
             return True
         except aiosmtplib.SMTPAuthenticationError as exc:
             logger.error(
-                "[%s] SMTP auth failed — check password or create App Password: %s",
+                "[%s] SMTP auth failed — use App Password if 2FA is enabled: %s",
                 self.email, exc,
             )
             return False
@@ -81,6 +91,35 @@ class SMTPSender:
                 pass
             self._smtp = None
 
+    def _build_message(
+        self,
+        to: str,
+        subject: str,
+        body_html: str,
+        reply_to: str = "",
+    ) -> EmailMessage:
+        """
+        Build a proper multipart/alternative email message.
+        HTML + plain text fallback + correct headers.
+        """
+        msg = EmailMessage()
+        msg["From"] = email.utils.formataddr((self.display_name, self.email))
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg["Date"] = email.utils.formatdate(localtime=False)
+        msg["Message-ID"] = _make_message_id(self.email)
+        if reply_to:
+            msg["Reply-To"] = reply_to
+
+        # Plain text fallback (important for spam score)
+        plain = _html_to_plain(body_html)
+        msg.set_content(plain, charset="utf-8")
+
+        # HTML version
+        msg.add_alternative(body_html, subtype="html", charset="utf-8")
+
+        return msg
+
     async def send_one(
         self,
         to: str,
@@ -88,58 +127,42 @@ class SMTPSender:
         body_html: str,
         reply_to: str = "",
     ) -> bool:
-        """
-        Send a single email. Returns True on success.
-        Reconnects automatically if connection was dropped.
-        """
+        """Send a single email. Returns True on success."""
         if not self._smtp or not self._smtp.is_connected:
             ok = await self.connect()
             if not ok:
                 return False
 
-        msg = EmailMessage()
-        msg["From"] = f"{self.display_name} <{self.email}>"
-        msg["To"] = to
-        msg["Subject"] = subject
-        if reply_to:
-            msg["Reply-To"] = reply_to
-
-        # Set plain text fallback + HTML
-        plain = _html_to_plain(body_html)
-        msg.set_content(plain)
-        msg.add_alternative(body_html, subtype="html")
+        msg = self._build_message(to, subject, body_html, reply_to)
 
         try:
             await self._smtp.send_message(msg)
             logger.debug("[%s] SMTP sent → %s", self.email, to)
             return True
         except aiosmtplib.SMTPRecipientRefused as exc:
-            # Destination address rejected — mark as bad
             logger.warning("[%s] Recipient refused %s: %s", self.email, to, exc)
             return False
         except aiosmtplib.SMTPSenderRefused as exc:
-            logger.error("[%s] Sender refused (account may be limited): %s", self.email, exc)
+            logger.error("[%s] Sender refused (account may be rate-limited): %s", self.email, exc)
             return False
         except aiosmtplib.SMTPException as exc:
-            logger.warning("[%s] SMTP error sending to %s: %s", self.email, to, exc)
-            # Try to reconnect for next message
-            self._smtp = None
+            logger.warning("[%s] SMTP error → %s: %s", self.email, to, exc)
+            self._smtp = None  # force reconnect next time
             return False
         except Exception as exc:
-            logger.error("[%s] Unexpected send error to %s: %s", self.email, to, exc)
+            logger.error("[%s] Unexpected send error → %s: %s", self.email, to, exc)
             self._smtp = None
             return False
 
     async def send_batch(
         self,
-        recipients: list,          # list of dicts with 'email', 'subject', 'body_html'
+        recipients: list,
         delay_range: Tuple[float, float] = (0.5, 1.5),
-        progress_callback=None,    # optional async callable(account_email, recipient_email, ok)
+        progress_callback: Optional[Callable] = None,
     ) -> Tuple[int, int]:
         """
-        Send a batch of emails from this account.
-        Returns (sent_count, failed_count).
-        Much faster than browser: no page loads, just API calls.
+        Send a batch. Returns (sent_count, failed_count).
+        recipients: list of dicts with keys: email, subject, body_html
         """
         connected = await self.connect()
         if not connected:
@@ -150,23 +173,23 @@ class SMTPSender:
 
         try:
             for rec in recipients:
-                to = rec["email"]
-                subject = rec.get("subject", "")
-                body = rec.get("body_html", "")
-
-                ok = await self.send_one(to, subject, body)
-
+                ok = await self.send_one(
+                    to=rec["email"],
+                    subject=rec.get("subject", ""),
+                    body_html=rec.get("body_html", ""),
+                )
                 if ok:
                     sent += 1
                 else:
                     failed += 1
 
                 if progress_callback:
-                    await progress_callback(self.email, to, ok)
+                    if asyncio.iscoroutinefunction(progress_callback):
+                        await progress_callback(self.email, rec["email"], ok)
+                    else:
+                        progress_callback(self.email, rec["email"], ok)
 
-                # Small human-like delay between sends
                 await asyncio.sleep(random.uniform(*delay_range))
-
         finally:
             await self.disconnect()
 
@@ -182,14 +205,14 @@ class SMTPSender:
 
 
 def _html_to_plain(html: str) -> str:
-    """Very simple HTML → plain text (strip tags, decode common entities)."""
-    import re
+    """Strip HTML tags to produce a plain text fallback."""
     text = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
     text = re.sub(r"<p[^>]*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</p>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<a[^>]+href=['\"]([^'\"]+)['\"][^>]*>(.*?)</a>",
+                  r"\2 (\1)", text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("&nbsp;", " ").replace("&amp;", "&")
     text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
-    # Collapse multiple blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

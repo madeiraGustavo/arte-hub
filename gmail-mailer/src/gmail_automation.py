@@ -374,12 +374,131 @@ class GmailAutomation:
 
         return True
 
+    # -----------------------------------------------------------------------
+    # App Password auto-generation
+    # -----------------------------------------------------------------------
+
+    async def generate_app_password(self, label: str = "MailerBot") -> Optional[str]:
+        """
+        Navigate to Google App Passwords page and auto-create a new App Password.
+        Returns the 16-character password string (spaces removed) or None on failure.
+        Saves the result to DB automatically.
+
+        App Passwords only work when 2FA is enabled on the account.
+        """
+        import re as _re
+        page = self._page
+        APP_PASS_URL = "https://myaccount.google.com/apppasswords"
+
+        try:
+            await page.goto(APP_PASS_URL, wait_until="domcontentloaded", timeout=30_000)
+            await _delay(2, 3)
+
+            # May redirect to login
+            if "accounts.google.com" in page.url:
+                logger.warning("[%s] App Passwords page requires re-auth", self.email)
+                return None
+
+            body = (await page.content()).lower()
+
+            # 2FA must be enabled for App Passwords
+            if "not available" in body or "not supported" in body:
+                logger.info(
+                    "[%s] App Passwords not available (2FA may be off)", self.email
+                )
+                return None
+
+            # New Google UI (2024+): text input for app name → Create button
+            name_input = page.locator(
+                'input[aria-label*="App name"], '
+                'input[placeholder*="app"], '
+                'input[type="text"]'
+            ).first
+
+            await name_input.wait_for(state="visible", timeout=10_000)
+            await name_input.fill(label)
+            await _delay(0.5, 1)
+
+            create_btn = page.locator(
+                'button:has-text("Create"), button:has-text("Generate"), '
+                'div[role="button"]:has-text("Create")'
+            ).first
+            await create_btn.click()
+            await _delay(2, 3)
+
+            # Password appears as 4 groups of 4 letters: "abcd efgh ijkl mnop"
+            body_text = await page.inner_text("body")
+            match = _re.search(
+                r'\b([a-z]{4})\s+([a-z]{4})\s+([a-z]{4})\s+([a-z]{4})\b',
+                body_text,
+                _re.IGNORECASE,
+            )
+            if not match:
+                # Try single-element approach
+                pwd_el = page.locator(
+                    'strong, code, [aria-live="assertive"], '
+                    'div[data-initial-value]'
+                ).first
+                try:
+                    await pwd_el.wait_for(state="visible", timeout=5_000)
+                    raw_text = await pwd_el.inner_text()
+                    match = _re.search(
+                        r'\b([a-z]{4})\s+([a-z]{4})\s+([a-z]{4})\s+([a-z]{4})\b',
+                        raw_text, _re.IGNORECASE,
+                    )
+                except Exception:
+                    pass
+
+            if not match:
+                logger.error("[%s] Could not find App Password on page", self.email)
+                return None
+
+            app_pwd = _re.sub(r'\s+', '', match.group(0)).lower()
+            if len(app_pwd) != 16:
+                logger.error("[%s] Unexpected App Password length: '%s'", self.email, app_pwd)
+                return None
+
+            await self.db.save_app_password(self.email, app_pwd)
+            logger.info("[%s] App Password generated: %s****", self.email, app_pwd[:4])
+
+            # Close dialog
+            done_btn = page.locator(
+                'button:has-text("Done"), button:has-text("OK"), '
+                'button:has-text("Close")'
+            ).first
+            if await done_btn.count() > 0:
+                await done_btn.click()
+
+            return app_pwd
+
+        except Exception as exc:
+            logger.error("[%s] App Password generation failed: %s", self.email, exc)
+            return None
+
     async def _post_login_check(self) -> bool:
+        """After reaching Gmail: run first-time setup if needed."""
         row = await self.db.get_account(self.email)
         if row and not row["first_login_completed"]:
-            logger.info("[%s] First login — clearing inbox", self.email)
+            logger.info("[%s] First login — setting up account", self.email)
+
+            # 1. Generate App Password (for SMTP/IMAP) — if not already stored
+            if not row["app_password"]:
+                app_pwd = await self.generate_app_password()
+                if app_pwd:
+                    logger.info("[%s] App Password ready for SMTP/IMAP", self.email)
+                else:
+                    logger.warning(
+                        "[%s] App Password generation failed — "
+                        "will use main password for SMTP (works if 2FA is OFF)",
+                        self.email,
+                    )
+
+            # 2. Clear inbox
             await self.clear_inbox()
+
+            # 3. Mark first login done
             await self.db.mark_first_login_done(self.email)
+
         return True
 
     # -----------------------------------------------------------------------

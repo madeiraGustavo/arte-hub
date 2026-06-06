@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     email                   TEXT NOT NULL UNIQUE,
     password                TEXT NOT NULL,
+    app_password            TEXT,               -- auto-generated App Password for SMTP/IMAP
     submail                 TEXT,
     two_fa_key              TEXT,               -- TOTP seed from 2fa.fb.tools
     status                  TEXT NOT NULL DEFAULT 'active',
@@ -117,6 +118,28 @@ class Database:
             (email, password, submail, two_fa_key, today),
         )
         await self._conn.commit()
+
+    async def save_app_password(self, email: str, app_password: str) -> None:
+        """Store the auto-generated App Password for SMTP/IMAP use."""
+        await self._conn.execute(
+            "UPDATE accounts SET app_password = ? WHERE email = ?",
+            (app_password, email),
+        )
+        await self._conn.commit()
+        logger.info("[%s] App Password saved to DB", email)
+
+    async def get_smtp_password(self, email: str) -> Optional[str]:
+        """
+        Returns the best password for SMTP/IMAP:
+        app_password if available, otherwise falls back to regular password.
+        """
+        async with self._conn.execute(
+            "SELECT app_password, password FROM accounts WHERE email = ?", (email,)
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            return row["app_password"] or row["password"]
 
     async def get_active_accounts(self) -> List[aiosqlite.Row]:
         today = date.today().isoformat()
