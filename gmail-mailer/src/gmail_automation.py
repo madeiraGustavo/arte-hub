@@ -1,14 +1,13 @@
 """
 Gmail automation via Playwright with stealth fingerprinting.
 
-Each account runs in its own persistent browser context (isolated profile dir),
-so cookies, localStorage, and fingerprints are fully separated.
+Each account runs in its own persistent browser context (isolated profile dir).
 
 Key flows:
-  - login()            — authenticate, handle 2FA + captcha, save cookies
-  - clear_inbox()      — delete all inbox messages (first-run only)
-  - send_email()       — compose and send a single email with retry logic
-  - check_replies()    — scan Inbox using IMAP (fast) or browser (fallback)
+  - load_session()     — load cookies from sessions/<email>.json (no login needed)
+  - login()            — fallback browser login if no session file
+  - send_email()       — compose and send via Gmail web UI (NOT SMTP)
+  - check_replies()    — scan Inbox using IMAP or browser
 """
 from __future__ import annotations
 
@@ -184,6 +183,29 @@ class GmailAutomation:
             await stealth_async(self._page)
 
         logger.info("[%s] Browser context started", self.email)
+
+    async def load_session(self) -> bool:
+        """Load cookies from sessions/<email>.json — no login needed."""
+        import json as _json
+        session_file = Path("sessions") / f"{re.sub(r'[^a-z0-9._-]', '_', self.email)}.json"
+        if not session_file.exists():
+            return False
+        try:
+            cookies = _json.loads(session_file.read_text(encoding="utf-8"))
+            await self._ctx.add_cookies(cookies)
+            await self._page.goto(GMAIL_INBOX, wait_until="domcontentloaded", timeout=30_000)
+            await _delay(2, 3)
+            if "mail.google.com" in self._page.url and "accounts.google" not in self._page.url:
+                logger.info("[%s] ✓ Session loaded — already in Gmail", self.email)
+                await self.db.mark_first_login_done(self.email)
+                return True
+            else:
+                logger.warning("[%s] Session expired — need fresh login", self.email)
+                session_file.unlink(missing_ok=True)
+                return False
+        except Exception as exc:
+            logger.error("[%s] Session load error: %s", self.email, exc)
+            return False
 
     async def stop(self) -> None:
         try:
