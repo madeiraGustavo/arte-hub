@@ -245,14 +245,27 @@ class GmailAutomation:
                     solved = await self._solve_login_recaptcha(page)
                     if solved:
                         await _delay(2, 4)
-                        next_btn = page.locator(
-                            'button:has-text("Next"), button:has-text("Suivant"), '
-                            'button:has-text("Weiter"), button:has-text("Далее"), '
-                            'div[role="button"]:has-text("Suivant")'
-                        ).first
-                        if await next_btn.count() > 0 and await next_btn.is_visible():
-                            await next_btn.click()
-                            await _delay(3, 5)
+                        # Use JS click to bypass overlay div intercepting pointer events
+                        clicked = await page.evaluate("""
+                            () => {
+                                // Try by jsname first (Google's "Next" button)
+                                const byName = document.querySelector(
+                                    'button[jsname="LgbsSe"], button[jsname="qABHAb"]'
+                                );
+                                if (byName) { byName.click(); return true; }
+                                // Try by text
+                                const all = document.querySelectorAll('button, div[role="button"]');
+                                for (const el of all) {
+                                    const t = (el.innerText || '').trim().toLowerCase();
+                                    if (['next','suivant','weiter','далее','avanti','siguiente'].includes(t)) {
+                                        el.click(); return true;
+                                    }
+                                }
+                                return false;
+                            }
+                        """)
+                        logger.info("[%s] Next button JS click: %s", self.email, clicked)
+                        await _delay(3, 5)
                         continue
                     else:
                         logger.error(
