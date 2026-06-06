@@ -79,15 +79,34 @@ class MessageLoader:
         self._cache[key] = content
         return content
 
-    def get_first_message(self, lang: str, **kwargs) -> str:
+    def get_first_message(self, lang: str, product: str = "", **kwargs) -> str:
+        """
+        Render the first-email template.
+        Substitutes {{PRODUCT}} with the listing title from Excel column B.
+        """
         tmpl = self._load("first", lang)
-        return tmpl.format_map(kwargs) if kwargs else tmpl
+        result = tmpl.replace("{{PRODUCT}}", product)
+        if kwargs:
+            try:
+                result = result.format_map(kwargs)
+            except (KeyError, ValueError):
+                pass
+        return result
 
-    def get_second_message(self, lang: str, link: str = "", **kwargs) -> str:
+    def get_second_message(self, lang: str, link: str = "", product: str = "", **kwargs) -> str:
+        """
+        Render the second-email template.
+        Substitutes {{LINK}} / ||link|| patterns and {{PRODUCT}}.
+        """
         tmpl = self._load("second", lang)
-        # Apply all link template patterns
         result = process_link_templates(tmpl, link)
-        return result.format_map(kwargs) if kwargs else result
+        result = result.replace("{{PRODUCT}}", product)
+        if kwargs:
+            try:
+                result = result.format_map(kwargs)
+            except (KeyError, ValueError):
+                pass
+        return result
 
     def get_first_subject(self, lang: str, original_subject: str = "") -> str:
         return original_subject or self._default_subject("first", lang)

@@ -112,8 +112,9 @@ class SendWave:
                 payloads = []
                 for rec in recipients:
                     lang = rec.get("language", "en")
-                    body_html = self.msg.get_first_message(lang)
-                    subject = self.msg.get_first_subject(lang, rec.get("subject", ""))
+                    product = rec.get("subject", "")   # Excel col B = product name
+                    body_html = self.msg.get_first_message(lang, product=product)
+                    subject = self.msg.get_first_subject(lang, product)
                     payloads.append({
                         "email": rec["email"],
                         "subject": subject,

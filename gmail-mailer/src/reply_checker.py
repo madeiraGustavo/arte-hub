@@ -114,8 +114,8 @@ class ReplyChecker:
                             )
 
                         lang = rec.get("language", "en")
-                        subject_original = rec.get("subject", "")
-                        body_html = self.msg.get_second_message(lang, link)
+                        subject_original = rec.get("subject", "")   # product name
+                        body_html = self.msg.get_second_message(lang, link, product=subject_original)
                         subject = self.msg.get_second_subject(lang, subject_original)
 
                         ok = await smtp.send_one(sender_email, subject, body_html)
