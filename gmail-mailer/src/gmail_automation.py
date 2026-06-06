@@ -210,22 +210,47 @@ class GmailAutomation:
             await _delay(3, 5)
 
             # ---- Detect what appeared ----
-            # Could be: password field, "Next" button, CAPTCHA, account picker
-            for attempt in range(3):
-                current_url = page.url
+            for attempt in range(4):
                 content = (await page.content()).lower()
 
                 # Save screenshot for debugging
                 try:
-                    import os
-                    os.makedirs("logs", exist_ok=True)
+                    import os as _os
+                    _os.makedirs("logs", exist_ok=True)
                     await page.screenshot(path=f"logs/login_{self.email.split('@')[0]}_{attempt}.png")
-                    logger.info("[%s] Screenshot saved: logs/login_%s_%d.png",
-                                self.email, self.email.split('@')[0], attempt)
                 except Exception:
                     pass
 
-                # Check for "couldn't find your Google Account"
+                # "Not a robot" reCAPTCHA page — handle it
+                if any(s in content for s in [
+                    "confirmez que vous n'êtes pas un robot",
+                    "confirm you're not a robot",
+                    "bestätigen sie, dass sie kein robot sind",
+                    "bevestig dat u geen robot bent",
+                    "not a robot",
+                ]):
+                    logger.info("[%s] reCAPTCHA challenge detected — attempting solve", self.email)
+                    solved = await self._solve_login_recaptcha(page)
+                    if solved:
+                        await _delay(2, 4)
+                        # Click "Next/Suivant" button after captcha
+                        next_btn = page.locator(
+                            'button:has-text("Next"), button:has-text("Suivant"), '
+                            'button:has-text("Weiter"), button:has-text("Далее"), '
+                            'div[role="button"]:has-text("Suivant")'
+                        ).first
+                        if await next_btn.count() > 0:
+                            await next_btn.click()
+                            await _delay(3, 5)
+                        continue
+                    else:
+                        logger.error(
+                            "[%s] reCAPTCHA not solved — add rucaptcha api_key to config.yaml",
+                            self.email
+                        )
+                        return False
+
+                # Account not found
                 if "couldn't find" in content or "no account found" in content:
                     logger.error("[%s] Google account not found", self.email)
                     await self.db.set_account_status(self.email, "error", notes="account not found")
@@ -233,18 +258,15 @@ class GmailAutomation:
 
                 # Password field visible?
                 pwd_input = page.locator('input[type="password"]')
-                if await pwd_input.count() > 0:
-                    is_visible = await pwd_input.first.is_visible()
-                    if is_visible:
-                        logger.info("[%s] Password field found on attempt %d", self.email, attempt + 1)
-                        break
+                if await pwd_input.count() > 0 and await pwd_input.first.is_visible():
+                    logger.info("[%s] Password field found on attempt %d", self.email, attempt + 1)
+                    break
 
-                # Log what's on the page
+                # Log page content for debugging
                 page_text = (await page.inner_text("body"))[:400].replace("\n", " ")
-                logger.info("[%s] Login page content (attempt %d): %s",
-                            self.email, attempt + 1, page_text)
+                logger.info("[%s] Login page (attempt %d): %s", self.email, attempt + 1, page_text)
 
-                # "Next" button still on screen?
+                # "Next" button still visible?
                 next_btn = page.locator(
                     'button:has-text("Next"), div[role="button"]:has-text("Next"), '
                     'button:has-text("Suivant"), button:has-text("Weiter"), '
@@ -255,7 +277,6 @@ class GmailAutomation:
                     await _delay(3, 5)
                     continue
 
-                # Still loading — wait more
                 await _delay(5, 8)
 
             # ---- Password step ----
@@ -287,6 +308,81 @@ class GmailAutomation:
             logger.error("[%s] Login error: %s", self.email, exc, exc_info=True)
             await self.db.set_account_status(self.email, "error", notes=str(exc))
             return False
+
+    async def _solve_login_recaptcha(self, page: Page) -> bool:
+        """
+        Handle reCAPTCHA on Google login page.
+        1. Try clicking the checkbox (works for simple 'I'm not a robot')
+        2. If still showing, use RuCaptcha solver (requires api_key in config)
+        """
+        # Try clicking reCAPTCHA checkbox inside iframe
+        try:
+            rc_frame = page.frame_locator(
+                'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], '
+                'iframe[title*="recaptcha"]'
+            ).first
+            checkbox = rc_frame.locator(
+                '#recaptcha-anchor, .recaptcha-checkbox, '
+                '[role="checkbox"], .rc-anchor-center-item'
+            ).first
+            if await checkbox.count() > 0:
+                await checkbox.click()
+                await _delay(3, 5)
+                logger.info("[%s] reCAPTCHA checkbox clicked", self.email)
+
+                # Check if solved (checkbox turns green / challenge disappears)
+                content = (await page.content()).lower()
+                if "not a robot" not in content and "confirmez" not in content:
+                    return True
+        except Exception as exc:
+            logger.debug("[%s] reCAPTCHA checkbox click failed: %s", self.email, exc)
+
+        # Fallback: use RuCaptcha/2captcha solver
+        if self._captcha_solver:
+            # Find sitekey
+            src = await page.content()
+            import re as _re
+            m = _re.search(r'data-sitekey=["\']([^"\']+)["\']', src)
+            if not m:
+                # Try finding it in recaptcha iframe URL
+                for frame in page.frames:
+                    if "recaptcha" in frame.url:
+                        fm = _re.search(r'[?&]k=([^&]+)', frame.url)
+                        if fm:
+                            m = fm
+                            break
+
+            if m:
+                site_key = m.group(1)
+                logger.info("[%s] Solving reCAPTCHA via service (key=%s…)", self.email, site_key[:10])
+                token = await self._captcha_solver.solve_recaptcha_v2(site_key, page.url)
+                if token:
+                    await page.evaluate(
+                        """(token) => {
+                            const el = document.querySelector('[name="g-recaptcha-response"]');
+                            if (el) el.value = token;
+                            // Trigger callback if available
+                            try {
+                                const id = Object.keys(___grecaptcha_cfg.clients)[0];
+                                const cb = ___grecaptcha_cfg.clients[id]?.U?.callback
+                                        || ___grecaptcha_cfg.clients[id]?.S?.callback;
+                                if (typeof cb === 'function') cb(token);
+                            } catch(e) {}
+                        }""",
+                        token,
+                    )
+                    await _delay(2, 3)
+                    return True
+            else:
+                logger.warning("[%s] reCAPTCHA sitekey not found", self.email)
+        else:
+            logger.warning(
+                "[%s] reCAPTCHA needs solving but no captcha solver configured. "
+                "Add your rucaptcha.com API key to config.yaml → captcha.api_key",
+                self.email,
+            )
+
+        return False
 
     async def _handle_post_password(self, page: Page) -> bool:
         content = (await page.content()).lower()
