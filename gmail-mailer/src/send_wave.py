@@ -72,31 +72,22 @@ class SendWave:
             async with sem:
                 acct_email = account["email"]
 
-                # ── Step 1: First-login check via Playwright ─────────────────
-                # Skip browser login if App Password is already stored —
-                # we don't need the browser to generate it.
+                # ── Step 1: First-login via browser (always required) ────────
+                # Google blocks SMTP with 534 until the account logs in via
+                # web browser at least once from this IP. We must do this
+                # even if an app_password was pre-supplied in accounts.txt —
+                # that 3rd field is NOT a Google App Password, it needs to be
+                # generated via the browser after login.
                 if not account.get("first_login_completed"):
-                    smtp_pwd = await self.db.get_smtp_password(acct_email)
-                    if smtp_pwd and smtp_pwd != account["password"]:
-                        # App Password already available — skip browser, just
-                        # mark first login done (inbox cleanup skipped for now)
-                        await self.db.mark_first_login_done(acct_email)
-                        account["first_login_completed"] = 1
-                        logger.info(
-                            "[%s] App Password pre-supplied — skipping browser login",
-                            acct_email,
-                        )
-                    else:
-                        # Need browser to handle 2FA / generate App Password
-                        await self._do_first_login(account)
-                        row = await self.db.get_account(acct_email)
-                        if row:
-                            account = dict(row)
-                        if not account.get("first_login_completed"):
-                            logger.warning("[%s] First login failed — skipping", acct_email)
-                            async with lock:
-                                errors_total += len(recipients)
-                            return
+                    await self._do_first_login(account)
+                    row = await self.db.get_account(acct_email)
+                    if row:
+                        account = dict(row)
+                    if not account.get("first_login_completed"):
+                        logger.warning("[%s] First login failed — skipping", acct_email)
+                        async with lock:
+                            errors_total += len(recipients)
+                        return
 
                 # ── Step 2: Send via SMTP ─────────────────────────────────────
                 # Use App Password if available (required when 2FA is on),

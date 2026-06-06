@@ -215,6 +215,16 @@ class GmailAutomation:
                 current_url = page.url
                 content = (await page.content()).lower()
 
+                # Save screenshot for debugging
+                try:
+                    import os
+                    os.makedirs("logs", exist_ok=True)
+                    await page.screenshot(path=f"logs/login_{self.email.split('@')[0]}_{attempt}.png")
+                    logger.info("[%s] Screenshot saved: logs/login_%s_%d.png",
+                                self.email, self.email.split('@')[0], attempt)
+                except Exception:
+                    pass
+
                 # Check for "couldn't find your Google Account"
                 if "couldn't find" in content or "no account found" in content:
                     logger.error("[%s] Google account not found", self.email)
@@ -226,12 +236,19 @@ class GmailAutomation:
                 if await pwd_input.count() > 0:
                     is_visible = await pwd_input.first.is_visible()
                     if is_visible:
+                        logger.info("[%s] Password field found on attempt %d", self.email, attempt + 1)
                         break
+
+                # Log what's on the page
+                page_text = (await page.inner_text("body"))[:400].replace("\n", " ")
+                logger.info("[%s] Login page content (attempt %d): %s",
+                            self.email, attempt + 1, page_text)
 
                 # "Next" button still on screen?
                 next_btn = page.locator(
                     'button:has-text("Next"), div[role="button"]:has-text("Next"), '
-                    'button:has-text("Suivant"), button:has-text("Weiter")'
+                    'button:has-text("Suivant"), button:has-text("Weiter"), '
+                    'button:has-text("Далее")'
                 ).first
                 if await next_btn.count() > 0 and await next_btn.is_visible():
                     await next_btn.click()
@@ -239,8 +256,7 @@ class GmailAutomation:
                     continue
 
                 # Still loading — wait more
-                logger.debug("[%s] Login: waiting for password field (attempt %d)", self.email, attempt + 1)
-                await _delay(4, 6)
+                await _delay(5, 8)
 
             # ---- Password step ----
             pwd_input = page.locator('input[type="password"]')
