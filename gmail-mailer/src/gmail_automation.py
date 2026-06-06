@@ -191,9 +191,9 @@ class GmailAutomation:
             await page.goto(
                 "https://accounts.google.com/signin/v2/identifier",
                 wait_until="domcontentloaded",
-                timeout=30_000,
+                timeout=60_000,
             )
-            await _delay(1, 2)
+            await _delay(2, 3)
 
             # Already logged in?
             if "mail.google.com" in page.url:
@@ -201,19 +201,65 @@ class GmailAutomation:
 
             # ---- Email step ----
             email_input = page.locator('input[type="email"]')
-            await email_input.wait_for(state="visible", timeout=15_000)
+            await email_input.wait_for(state="visible", timeout=30_000)
             await _human_type(page, email_input, self.email)
-            await _delay(0.5, 1)
+            await _delay(0.8, 1.5)
             await page.keyboard.press("Enter")
-            await _delay(1.5, 2.5)
+
+            # Wait for navigation after email step (proxy can be slow)
+            await _delay(3, 5)
+
+            # ---- Detect what appeared ----
+            # Could be: password field, "Next" button, CAPTCHA, account picker
+            for attempt in range(3):
+                current_url = page.url
+                content = (await page.content()).lower()
+
+                # Check for "couldn't find your Google Account"
+                if "couldn't find" in content or "no account found" in content:
+                    logger.error("[%s] Google account not found", self.email)
+                    await self.db.set_account_status(self.email, "error", notes="account not found")
+                    return False
+
+                # Password field visible?
+                pwd_input = page.locator('input[type="password"]')
+                if await pwd_input.count() > 0:
+                    is_visible = await pwd_input.first.is_visible()
+                    if is_visible:
+                        break
+
+                # "Next" button still on screen?
+                next_btn = page.locator(
+                    'button:has-text("Next"), div[role="button"]:has-text("Next"), '
+                    'button:has-text("Suivant"), button:has-text("Weiter")'
+                ).first
+                if await next_btn.count() > 0 and await next_btn.is_visible():
+                    await next_btn.click()
+                    await _delay(3, 5)
+                    continue
+
+                # Still loading — wait more
+                logger.debug("[%s] Login: waiting for password field (attempt %d)", self.email, attempt + 1)
+                await _delay(4, 6)
 
             # ---- Password step ----
             pwd_input = page.locator('input[type="password"]')
-            await pwd_input.wait_for(state="visible", timeout=15_000)
+            try:
+                await pwd_input.first.wait_for(state="visible", timeout=45_000)
+            except PWTimeout:
+                # Debug: log what's on the page
+                body_snippet = (await page.inner_text("body"))[:300].replace("\n", " ")
+                logger.error(
+                    "[%s] Password field not found after 45s. Page content: %s",
+                    self.email, body_snippet,
+                )
+                await self.db.set_account_status(self.email, "error", notes="password field timeout")
+                return False
+
             await _human_type(page, pwd_input, self.account["password"])
-            await _delay(0.5, 1)
+            await _delay(0.8, 1.5)
             await page.keyboard.press("Enter")
-            await _delay(2, 4)
+            await _delay(3, 5)
 
             return await self._handle_post_password(page)
 
