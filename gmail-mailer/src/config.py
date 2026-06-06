@@ -40,9 +40,9 @@ class LimitsConfig:
     daily_per_account: int = 100
     total_per_account: int = 300
     days_before_account_removal: int = 3
-    send_delay_min: float = 2.0
-    send_delay_max: float = 5.0
-    concurrent_accounts: int = 2
+    send_delay_min: float = 0.5      # SMTP is fast — short delay is enough
+    send_delay_max: float = 1.5
+    concurrent_accounts: int = 10    # SMTP is lightweight, 10 parallel is fine
 
 
 @dataclass

@@ -24,9 +24,9 @@ limits:
   daily_per_account: 100             # Max emails per account per day
   total_per_account: 300             # Lifetime limit per account (3 days × 100)
   days_before_account_removal: 3     # After exhaustion, remove after N days
-  send_delay_min: 2                  # Minimum seconds between sends
-  send_delay_max: 5                  # Maximum seconds between sends
-  concurrent_accounts: 2             # How many accounts work in parallel
+  send_delay_min: 0.5                # Minimum seconds between sends (SMTP is fast)
+  send_delay_max: 1.5                # Maximum seconds between sends
+  concurrent_accounts: 10            # Accounts working in parallel (SMTP is lightweight)
 
 # Reply checking schedule (hours after which to check for replies)
 reply_check_hours: [1, 3, 8]

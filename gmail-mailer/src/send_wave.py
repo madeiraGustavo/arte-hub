@@ -1,11 +1,22 @@
 """
-Main send wave — loads recipients from Excel, distributes them across accounts,
-and sends first emails.
+Daily send wave — loads recipients from Excel and sends first emails
+via SMTP (fast, same mechanism as Google Apps Script).
+
+Architecture:
+  - Each account gets its own SMTPSender instance
+  - Up to `concurrent_accounts` accounts send in parallel (default 10)
+  - Each account sends its assigned batch sequentially with 0.5–1.5s delay
+  - Total time: ~1-2 min per account; 100 accounts at 10 parallel = ~10-20 min
+
+Playwright is used ONLY for:
+  - First-ever login (to establish session, handle 2FA/captcha)
+  - First-login inbox cleanup
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date
 from typing import Optional
 
 from .account_manager import AccountManager
@@ -14,6 +25,7 @@ from .database import Database
 from .excel_reader import load_recipients
 from .gmail_automation import GmailAutomation
 from .message_loader import MessageLoader
+from .smtp_sender import SMTPSender
 from .telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -35,7 +47,6 @@ class SendWave:
         self.notifier = notifier
 
     async def load_today_recipients(self) -> int:
-        """Read Excel and upsert new recipients into DB."""
         records = load_recipients(self.config.paths.recipients_excel)
         for email, subject, lang in records:
             await self.db.upsert_recipient(email, subject, lang)
@@ -43,10 +54,8 @@ class SendWave:
 
     async def run(self) -> dict:
         """
-        Full sending wave:
-          1. Reset daily counters
-          2. Load recipients from Excel
-          3. Send first emails account-by-account
+        Full sending wave.
+        Returns stats dict.
         """
         await self.db.reset_daily_counters()
 
@@ -56,72 +65,117 @@ class SendWave:
         sem = asyncio.Semaphore(self.config.limits.concurrent_accounts)
         first_sent_total = 0
         errors_total = 0
+        lock = asyncio.Lock()
 
-        async def _send_batch(account: dict, recipients: list) -> None:
+        async def _send_account_batch(account: dict, recipients: list) -> None:
             nonlocal first_sent_total, errors_total
             async with sem:
-                automation = GmailAutomation(
-                    account=account,
-                    config=self.config,
-                    db=self.db,
-                    telegram_notifier=self.notifier,
-                )
-                try:
-                    await automation.start()
-                    logged_in = await automation.login()
-                    if not logged_in:
-                        logger.warning("[%s] Login failed — skipping batch", account["email"])
-                        errors_total += len(recipients)
+                acct_email = account["email"]
+
+                # ── Step 1: First-login check via Playwright ─────────────────
+                # Only if first_login_completed == 0 (need to clean inbox / handle 2FA)
+                if not account.get("first_login_completed"):
+                    await self._do_first_login(account)
+                    # Refresh account data after first login
+                    row = await self.db.get_account(acct_email)
+                    if row:
+                        account = dict(row)
+                    # If still not completed (login failed), skip this account
+                    if not account.get("first_login_completed"):
+                        logger.warning("[%s] First login failed — skipping", acct_email)
+                        async with lock:
+                            errors_total += len(recipients)
                         return
 
-                    for rec in recipients:
-                        r_email = rec["email"]
-                        lang = rec.get("language", "en")
-                        subject = rec.get("subject", "")
+                # ── Step 2: Send via SMTP ─────────────────────────────────────
+                smtp = SMTPSender(
+                    account_email=acct_email,
+                    password=account["password"],
+                )
 
-                        body_html = self.msg.get_first_message(lang)
-                        send_subject = self.msg.get_first_subject(lang, subject)
+                sent_emails: list[str] = []
+                failed_emails: list[str] = []
 
-                        ok = await automation.send_email(
-                            to=r_email,
-                            subject=send_subject,
-                            body_html=body_html,
-                            send_delay=(
-                                self.config.limits.send_delay_min,
-                                self.config.limits.send_delay_max,
-                            ),
-                        )
+                async def _on_progress(acc_email: str, to: str, ok: bool) -> None:
+                    if ok:
+                        await self.db.mark_first_sent(to, acc_email)
+                        await self.db.increment_sent(acc_email)
+                        sent_emails.append(to)
+                    else:
+                        await self.db.mark_bad(to)
+                        failed_emails.append(to)
 
-                        if ok:
-                            await self.db.mark_first_sent(r_email, account["email"])
-                            await self.db.increment_sent(account["email"])
-                            first_sent_total += 1
-                        else:
-                            await self.db.mark_bad(r_email)
-                            errors_total += 1
+                # Build per-recipient payloads
+                payloads = []
+                for rec in recipients:
+                    lang = rec.get("language", "en")
+                    body_html = self.msg.get_first_message(lang)
+                    subject = self.msg.get_first_subject(lang, rec.get("subject", ""))
+                    payloads.append({
+                        "email": rec["email"],
+                        "subject": subject,
+                        "body_html": body_html,
+                    })
 
-                except Exception as exc:
-                    logger.error("[%s] Send wave error: %s", account["email"], exc, exc_info=True)
-                    await self.notifier.send(
-                        f"❌ Error in send wave for <code>{account['email']}</code>: {exc}"
-                    ) if self.notifier else None
-                finally:
-                    await automation.stop()
+                sent_count, failed_count = await smtp.send_batch(
+                    recipients=payloads,
+                    delay_range=(
+                        self.config.limits.send_delay_min,
+                        self.config.limits.send_delay_max,
+                    ),
+                    progress_callback=_on_progress,
+                )
 
+                async with lock:
+                    first_sent_total += sent_count
+                    errors_total += failed_count
+
+                logger.info(
+                    "[%s] Wave: sent=%d failed=%d",
+                    acct_email, sent_count, failed_count,
+                )
+
+        # Build task list from account slots
         tasks = []
         async for account, batch in self.acct_mgr.account_slot_generator():
-            tasks.append(_send_batch(account, batch))
+            tasks.append(_send_account_batch(account, batch))
+
+        if not tasks:
+            logger.info("No tasks to run (no active accounts or no pending recipients)")
+            return {"first_sent": 0, "errors": 0}
+
+        logger.info("Starting send wave: %d account batches, concurrency=%d",
+                    len(tasks), self.config.limits.concurrent_accounts)
 
         await asyncio.gather(*tasks)
 
-        # Check for newly exhausted accounts and notify
-        rows = await self.db.get_active_accounts()
-        if self.notifier:
-            active = len(rows)
-            if active <= 5:
-                await self.notifier.alert_accounts_low(active)
+        # Notify if running low on accounts
+        active_rows = await self.db.get_active_accounts()
+        if self.notifier and len(active_rows) <= 5:
+            await self.notifier.alert_accounts_low(len(active_rows))
 
-        return {
-            "first_sent": first_sent_total,
-            "errors": errors_total,
-        }
+        return {"first_sent": first_sent_total, "errors": errors_total}
+
+    async def _do_first_login(self, account: dict) -> None:
+        """
+        Use Playwright for the very first login only:
+        - Handles 2FA / captcha
+        - Clears inbox
+        - Marks first_login_completed = 1 in DB
+        After this, SMTP is used for all sends.
+        """
+        automation = GmailAutomation(
+            account=account,
+            config=self.config,
+            db=self.db,
+            telegram_notifier=self.notifier,
+        )
+        try:
+            await automation.start()
+            ok = await automation.login()
+            if not ok:
+                logger.error("[%s] First login via browser failed", account["email"])
+        except Exception as exc:
+            logger.error("[%s] First login error: %s", account["email"], exc)
+        finally:
+            await automation.stop()
