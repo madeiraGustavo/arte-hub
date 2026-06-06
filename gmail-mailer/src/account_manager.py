@@ -1,11 +1,26 @@
 """
 Account manager — loads accounts from text files, syncs to DB,
 and provides a round-robin dispatcher that respects daily/total limits.
+
+Supported account formats (auto-detected, separator can be : or |):
+
+  email:password:submail:2fa_key          (colon, 4 fields)
+  email:password:submail                  (colon, 3 fields)
+  email|password|app_password_or_2fa      (pipe,  3 fields)
+  email|password                          (pipe,  2 fields)
+
+Field detection logic for the 3rd field:
+  - contains '@'       → submail (recovery email)
+  - 16 lowercase only  → App Password (Google format, no spaces)
+  - 32 lowercase+digits → App Password (stored without spaces)
+  - 16–64 BASE32 chars  → 2FA TOTP key
+  - anything else       → treated as App Password
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import AsyncIterator, List, Optional
 
@@ -13,28 +28,85 @@ from .database import Database
 
 logger = logging.getLogger(__name__)
 
+_BASE32_RE = re.compile(r'^[A-Z2-7]{16,64}$')
+_APPPASS_RE = re.compile(r'^[a-z0-9]{16,32}$')   # Google App Password (no spaces)
+
+
+def _classify_third_field(value: str) -> dict:
+    """
+    Returns dict with keys: submail, two_fa_key, app_password
+    exactly one of which is non-None.
+    """
+    v = value.strip()
+    if not v:
+        return {"submail": None, "two_fa_key": None, "app_password": None}
+
+    # Recovery email
+    if "@" in v:
+        return {"submail": v, "two_fa_key": None, "app_password": None}
+
+    # Standard Base32 TOTP seed (uppercase A-Z and 2-7)
+    if _BASE32_RE.match(v.upper()) and v.upper() == v:
+        return {"submail": None, "two_fa_key": v, "app_password": None}
+
+    # Looks like an App Password (16–32 lowercase letters/digits, no spaces)
+    if _APPPASS_RE.match(v):
+        return {"submail": None, "two_fa_key": None, "app_password": v}
+
+    # Fallback: mixed case/length → store as App Password and try it for SMTP
+    return {"submail": None, "two_fa_key": None, "app_password": v}
+
 
 def parse_account_line(line: str) -> Optional[dict]:
     """
-    Supports two formats:
-      email:password:submail:2fa_key
-      email:password:submail
-    Returns None on parse error.
+    Parse one line from accounts.txt.
+    Supports both ':' and '|' as separators.
+    Returns None on parse error or blank/comment line.
     """
     line = line.strip()
     if not line or line.startswith("#"):
         return None
-    parts = line.split(":", 3)
-    if len(parts) < 3:
-        logger.warning("Skipping malformed account line: %s", line[:40])
+
+    # Detect separator: pipe takes precedence if present
+    if "|" in line:
+        parts = line.split("|")
+    else:
+        parts = line.split(":", 3)
+
+    if len(parts) < 2:
+        logger.warning("Skipping malformed account line: %s", line[:60])
         return None
-    account = {
-        "email":     parts[0].strip(),
-        "password":  parts[1].strip(),
-        "submail":   parts[2].strip(),
-        "two_fa_key": parts[3].strip() if len(parts) == 4 else None,
+
+    email    = parts[0].strip()
+    password = parts[1].strip()
+
+    if not email or "@" not in email:
+        logger.warning("Invalid email in account line: %s", line[:60])
+        return None
+
+    submail     = None
+    two_fa_key  = None
+    app_password = None
+
+    if len(parts) == 3:
+        # 3-field line: classify the third field
+        classified = _classify_third_field(parts[2])
+        submail      = classified["submail"]
+        two_fa_key   = classified["two_fa_key"]
+        app_password = classified["app_password"]
+
+    elif len(parts) >= 4:
+        # 4-field line: email:password:submail:2fa_key  (classic colon format)
+        submail    = parts[2].strip() or None
+        two_fa_key = parts[3].strip() or None
+
+    return {
+        "email":        email.lower(),
+        "password":     password,
+        "submail":      submail,
+        "two_fa_key":   two_fa_key,
+        "app_password": app_password,
     }
-    return account
 
 
 class AccountManager:
@@ -65,6 +137,12 @@ class AccountManager:
                     submail=parsed["submail"],
                     two_fa_key=parsed["two_fa_key"],
                 )
+                # If the line already contained an App Password, save it now
+                # so SMTP works immediately without needing browser setup
+                if parsed["app_password"]:
+                    await self.db.save_app_password(
+                        parsed["email"], parsed["app_password"]
+                    )
                 loaded += 1
 
         logger.info("Loaded %d accounts from %s", loaded, path)
