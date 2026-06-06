@@ -76,6 +76,9 @@ async def _js_click_by_text(page, *texts) -> bool:
             return false;
         }}
     """)
+
+
+def _random_fingerprint(seed: str) -> dict:
     rng = random.Random(seed)
     w, h = rng.choice(VIEWPORTS)
     return {
