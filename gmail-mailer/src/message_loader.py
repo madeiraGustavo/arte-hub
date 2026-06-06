@@ -1,16 +1,60 @@
 """
 Message loader — reads HTML templates from data/messages/{first,second}/<lang>.html
 and performs variable substitution.
+
+Supported link-insertion syntax (from BAS script):
+  {{LINK}}              — replaced with the raw URL
+  ||link||              — replaced with the raw URL
+  ||link||>>||Text||    — replaced with <a href="URL">Text</a>
+  ||link||>gen_id>||Text||  — replaced with <a href="URL">Text/ID</a>
+                              where ID is the last path segment of the URL
 """
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_LANGS = ("nl", "fr", "de", "en")
+
+
+def process_link_templates(text: str, link: str) -> str:
+    """
+    Apply all link-substitution patterns to `text`.
+    Works on both plain text and HTML bodies.
+    """
+    if not link:
+        # Remove template markers if no link available
+        text = re.sub(r"\|\|link\|\|>gen_id>\|\|.*?\|\|", "", text)
+        text = re.sub(r"\|\|link\|\|>>\|\|.*?\|\|", "", text)
+        text = text.replace("||link||", "").replace("{{LINK}}", "")
+        return text
+
+    # Extract ID from URL (last path segment, e.g. "abc123" from "https://x.com/pay/abc123")
+    id_match = re.search(r"/([^/?#]+)/?$", link)
+    link_id = id_match.group(1) if id_match else ""
+
+    # Pattern 1: ||link||>gen_id>||Display Text||  → <a href="URL">Display Text/ID</a>
+    def replace_gen_id(m):
+        display = m.group(1)
+        return f'<a href="{link}">{display}/{link_id}</a>'
+
+    text = re.sub(r"\|\|link\|\|>gen_id>\|\|(.*?)\|\|", replace_gen_id, text)
+
+    # Pattern 2: ||link||>>||Display Text||  → <a href="URL">Display Text</a>
+    def replace_with_text(m):
+        display = m.group(1)
+        return f'<a href="{link}">{display}</a>'
+
+    text = re.sub(r"\|\|link\|\|>>\|\|(.*?)\|\|", replace_with_text, text)
+
+    # Pattern 3: ||link|| or {{LINK}}  → raw URL
+    text = text.replace("||link||", link).replace("{{LINK}}", link)
+
+    return text
 
 
 class MessageLoader:
@@ -25,11 +69,10 @@ class MessageLoader:
 
         path = self.base / category / f"{lang}.html"
         if not path.exists():
-            # fallback to English
-            logger.warning("Template not found: %s — using en", path)
+            logger.warning("Template not found: %s — falling back to en", path)
             path = self.base / category / "en.html"
         if not path.exists():
-            logger.error("No fallback template found for %s/%s", category, lang)
+            logger.error("No fallback template for %s/%s", category, lang)
             return "<p>No message template found.</p>"
 
         content = path.read_text(encoding="utf-8")
@@ -42,17 +85,17 @@ class MessageLoader:
 
     def get_second_message(self, lang: str, link: str = "", **kwargs) -> str:
         tmpl = self._load("second", lang)
-        return tmpl.replace("{{LINK}}", link).format_map(kwargs) if kwargs else tmpl.replace("{{LINK}}", link)
+        # Apply all link template patterns
+        result = process_link_templates(tmpl, link)
+        return result.format_map(kwargs) if kwargs else result
 
     def get_first_subject(self, lang: str, original_subject: str = "") -> str:
-        """Use the Excel subject as-is (it's already personalised)."""
         return original_subject or self._default_subject("first", lang)
 
     def get_second_subject(self, lang: str, original_subject: str = "") -> str:
-        prefix = {"nl": "Re", "fr": "Re", "de": "Re", "en": "Re"}.get(lang, "Re")
         base = original_subject or self._default_subject("first", lang)
-        if not base.startswith("Re:"):
-            return f"{prefix}: {base}"
+        if not base.startswith("Re:") and not base.startswith("RE:"):
+            return f"Re: {base}"
         return base
 
     def _default_subject(self, category: str, lang: str) -> str:

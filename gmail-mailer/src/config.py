@@ -15,6 +15,12 @@ ROOT = Path(__file__).parent.parent
 
 
 @dataclass
+class CaptchaConfig:
+    service: str = "rucaptcha"   # rucaptcha | 2captcha
+    api_key: str = ""
+
+
+@dataclass
 class ProxyConfig:
     server: str
     username: str = ""
@@ -68,6 +74,7 @@ class PathsConfig:
 class AppConfig:
     proxy: ProxyConfig
     telegram: TelegramConfig
+    captcha: CaptchaConfig = field(default_factory=CaptchaConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     browser: BrowserConfig = field(default_factory=BrowserConfig)
     fingerprint: FingerprintConfig = field(default_factory=FingerprintConfig)
@@ -96,6 +103,7 @@ def load_config(path: Optional[str] = None) -> AppConfig:
 
     proxy_raw = raw.get("proxy", {})
     telegram_raw = raw.get("telegram", {})
+    captcha_raw = raw.get("captcha", {})
     limits_raw = raw.get("limits", {})
     browser_raw = raw.get("browser", {})
     fp_raw = raw.get("fingerprint", {})
@@ -104,6 +112,7 @@ def load_config(path: Optional[str] = None) -> AppConfig:
     cfg = AppConfig(
         proxy=ProxyConfig(**proxy_raw),
         telegram=TelegramConfig(**telegram_raw),
+        captcha=CaptchaConfig(**captcha_raw),
         limits=LimitsConfig(**limits_raw),
         browser=BrowserConfig(**browser_raw),
         fingerprint=FingerprintConfig(**fp_raw),

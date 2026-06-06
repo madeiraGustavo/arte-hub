@@ -1,6 +1,11 @@
 # Gmail Mass Mailer — Configuration
 # Copy this to config.yaml and fill in your values
 
+# Captcha solving service (RuCaptcha or 2captcha — same API)
+captcha:
+  service: "rucaptcha"          # or "2captcha"
+  api_key: "YOUR_RUCAPTCHA_KEY" # from rucaptcha.com / 2captcha.com
+
 proxy:
   server: "http://your-proxy-host:port"
   username: "proxy_user"

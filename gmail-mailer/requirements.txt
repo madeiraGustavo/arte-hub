@@ -12,3 +12,5 @@ python-dateutil==2.9.0
 colorlog==6.8.2
 apscheduler==3.10.4
 langdetect==1.0.9
+aioimaplib==2.0.1
+aiosmtplib==5.1.1
